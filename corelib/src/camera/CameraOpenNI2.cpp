@@ -74,7 +74,8 @@ CameraOpenNI2::CameraOpenNI2(
 	_deviceId(deviceId),
 	_openNI2StampsAndIDsUsed(false),
 	_depthHShift(0),
-	_depthVShift(0)
+	_depthVShift(0),
+	_depthDecimation(1)
 #endif
 {
 }
@@ -177,10 +178,16 @@ void CameraOpenNI2::setOpenNI2StampsAndIDsUsed(bool used)
 void CameraOpenNI2::setIRDepthShift(int horizontal, int vertical)
 {
 #ifdef RTABMAP_OPENNI2
-	UASSERT(horizontal >= 0);
-	UASSERT(vertical >= 0);
 	_depthHShift = horizontal;
 	_depthVShift = vertical;
+#endif
+}
+
+void CameraOpenNI2::setDepthDecimation(int decimation)
+{
+#ifdef RTABMAP_OPENNI2
+	UASSERT(decimation >= 1);
+	_depthDecimation = decimation;
 #endif
 }
 
@@ -466,7 +473,7 @@ std::string CameraOpenNI2::getSerial() const
 	return "";
 }
 
-SensorData CameraOpenNI2::captureImage(CameraInfo * info)
+SensorData CameraOpenNI2::captureImage(SensorCaptureInfo * info)
 {
 	SensorData data;
 #ifdef RTABMAP_OPENNI2
@@ -529,10 +536,19 @@ SensorData CameraOpenNI2::captureImage(CameraInfo * info)
 
 				if(_type==kTypeColorDepth)
 				{
-					if (_depthHShift > 0 || _depthVShift > 0)
+					if (_depthHShift != 0 || _depthVShift != 0)
 					{
 						cv::Mat out = cv::Mat::zeros(depth.size(), depth.type());
-						depth(cv::Rect(_depthHShift, _depthVShift, depth.cols - _depthHShift, depth.rows - _depthVShift)).copyTo(out(cv::Rect(0, 0, depth.cols - _depthHShift, depth.rows - _depthVShift)));
+						depth(cv::Rect(
+								_depthHShift>0?_depthHShift:0,
+								_depthVShift>0?_depthVShift:0,
+								depth.cols - abs(_depthHShift),
+								depth.rows - abs(_depthVShift))).copyTo(
+							   out(cv::Rect(
+								_depthHShift<0?-_depthHShift:0,
+								_depthVShift<0?-_depthVShift:0,
+								depth.cols - abs(_depthHShift),
+								depth.rows - abs(_depthVShift))));
 						depth = out;
 					}
 
@@ -544,8 +560,18 @@ SensorData CameraOpenNI2::captureImage(CameraInfo * info)
 						if(_stereoModel.left().isValidForRectification() && !_stereoModel.stereoTransform().isNull())
 						{
 							depth = _stereoModel.left().rectifyImage(depth, 0);
-							depth = util2d::registerDepth(depth, _stereoModel.left().K(), rgb.size(), _stereoModel.right().K(), _stereoModel.stereoTransform());
+							CameraModel depthModel = _stereoModel.left().scaled(1.0 / double(_depthDecimation));
+							depth = util2d::decimate(depth, _depthDecimation);
+							depth = util2d::registerDepth(depth, depthModel.K(), rgb.size()/_depthDecimation, _stereoModel.right().scaled(1.0/double(_depthDecimation)).K(), _stereoModel.stereoTransform());
 						}
+						else if (_depthDecimation > 1)
+						{
+							depth = util2d::decimate(depth, _depthDecimation);
+						}
+					}
+					else if (_depthDecimation > 1)
+					{
+						depth = util2d::decimate(depth, _depthDecimation);
 					}
 				}
 				else // IR

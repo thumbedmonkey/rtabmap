@@ -28,15 +28,17 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef RTABMAP_MAINWINDOW_H_
 #define RTABMAP_MAINWINDOW_H_
 
-#include "rtabmap/gui/RtabmapGuiExp.h" // DLL export/import defines
+#include "rtabmap/gui/rtabmap_gui_export.h" // DLL export/import defines
 
 #include "rtabmap/utilite/UEventsHandler.h"
 #include <QMainWindow>
 #include <QtCore/QSet>
+#include <QElapsedTimer>
 #include "rtabmap/core/RtabmapEvent.h"
 #include "rtabmap/core/SensorData.h"
 #include "rtabmap/core/OdometryEvent.h"
-#include "rtabmap/core/CameraInfo.h"
+#include "rtabmap/core/Optimizer.h"
+#include "rtabmap/core/GlobalMap.h"
 #include "rtabmap/gui/PreferencesDialog.h"
 
 #include <pcl/point_cloud.h>
@@ -44,9 +46,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <pcl/PolygonMesh.h>
 #include <pcl/pcl_base.h>
 #include <pcl/TextureMesh.h>
+#include <rtabmap/core/SensorCaptureInfo.h>
 
 namespace rtabmap {
-class CameraThread;
+class SensorCaptureThread;
 class OdometryThread;
 class IMUThread;
 class CloudViewer;
@@ -73,8 +76,10 @@ class PostProcessingDialog;
 class DepthCalibrationDialog;
 class DataRecorder;
 class OctoMap;
+class GridMap;
+class MultiSessionLocWidget;
 
-class RTABMAPGUI_EXP MainWindow : public QMainWindow, public UEventsHandler
+class RTABMAP_GUI_EXPORT MainWindow : public QMainWindow, public UEventsHandler
 {
 	Q_OBJECT
 
@@ -161,11 +166,10 @@ protected Q_SLOTS:
 	void exportPosesG2O();
 	void exportImages();
 	void exportOctomap();
-	void postProcessing();
+	void showPostProcessingDialog();
 	void depthCalibration();
 	void openWorkingDirectory();
 	void updateEditMenu();
-	void selectStream();
 	void selectOpenni();
 	void selectFreenect();
 	void selectOpenniCv();
@@ -185,20 +189,26 @@ protected Q_SLOTS:
 	void selectStereoTara();
 	void selectStereoUsb();
 	void selectMyntEyeS();
-	void selectDepthAI();
+	void selectDepthAIOAKD();
+	void selectDepthAIOAKDLite();
+	void selectDepthAIOAKDPro();
+	void selectXvisioSeerSense();
+	void selectVLP16();
 	void dumpTheMemory();
 	void dumpThePrediction();
 	void sendGoal();
 	void sendWaypoints();
+	void postGoal();
 	void postGoal(const QString & goal);
 	void cancelGoal();
 	void label();
+	void removeLabel();
 	void updateCacheFromDatabase();
 	void anchorCloudsToGroundTruth();
 	void selectScreenCaptureFormat(bool checked);
 	void takeScreenshot();
 	void updateElapsedTime();
-	void processCameraInfo(const rtabmap::CameraInfo & info);
+	void processCameraInfo(const rtabmap::SensorCaptureInfo & info);
 	void processOdometry(const rtabmap::OdometryEvent & odom, bool dataIgnored);
 	void applyPrefSettings(PreferencesDialog::PANEL_FLAGS flags);
 	void applyPrefSettings(const rtabmap::ParametersMap & parameters);
@@ -233,7 +243,7 @@ protected Q_SLOTS:
 Q_SIGNALS:
 	void statsReceived(const rtabmap::Statistics &);
 	void statsProcessed();
-	void cameraInfoReceived(const rtabmap::CameraInfo &);
+	void cameraInfoReceived(const rtabmap::SensorCaptureInfo &);
 	void cameraInfoProcessed();
 	void odometryReceived(const rtabmap::OdometryEvent &, bool);
 	void odometryProcessed();
@@ -261,6 +271,8 @@ private:
 			const std::map<int, int> & mapIds,
 			const std::map<int, std::string> & labels,
 			const std::map<int, Transform> & groundTruths,
+			const std::map<int, Transform> & odomCachePoses = std::map<int, Transform>(),
+			const std::multimap<int, Link> & odomCacheConstraints = std::multimap<int, Link>(),
 			bool verboseProgress = false,
 			std::map<std::string, float> * stats = 0);
 	std::pair<pcl::PointCloud<pcl::PointXYZRGB>::Ptr, pcl::IndicesPtr> createAndAddCloudToMap(int nodeId,	const Transform & pose, int mapId);
@@ -306,17 +318,30 @@ protected:
 	const QString & newDatabasePathOutput() const { return _newDatabasePathOutput; }
 
 	virtual ParametersMap getCustomParameters() {return ParametersMap();}
-	virtual Camera * createCamera(
-			Camera ** odomSensor,
-			Transform & odomSensorExtrinsics,
-			double & odomSensorTimeOffset,
-			float & odomSensorScaleFactor);
+
+	void postProcessing(
+			bool refineNeighborLinks,
+			bool refineLoopClosureLinks,
+			// Detect more loop closures params:
+			bool detectMoreLoopClosures,
+			double clusterRadius,
+			double clusterAngle,
+			int iterations,
+			bool interSession,
+			bool intraSession,
+			// SBA params:
+			bool sba,
+			int sbaIterations,
+			double sbaVariance,
+			Optimizer::Type sbaType,
+			double sbaRematchFeatures,
+			bool abortIfDataMissing = true);
 
 private:
 	Ui_mainWindow * _ui;
 
 	State _state;
-	rtabmap::CameraThread * _camera;
+	rtabmap::SensorCaptureThread * _sensorCapture;
 	rtabmap::OdometryThread * _odomThread;
 	rtabmap::IMUThread * _imuThread;
 
@@ -362,11 +387,13 @@ private:
 	std::pair<int, std::pair<std::pair<pcl::PointCloud<pcl::PointXYZRGB>::Ptr, pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr>, pcl::IndicesPtr> > _previousCloud; // used for subtraction
 	std::map<int, float> _cachedWordsCount;
 	std::map<int, float> _cachedLocalizationsCount;
+	rtabmap::LocalGridCache _cachedLocalMaps;
 
 	std::map<int, LaserScan> _createdScans;
 
 	rtabmap::OccupancyGrid * _occupancyGrid;
 	rtabmap::OctoMap * _octomap;
+	rtabmap::GridMap * _elevationMap;
 
 	std::map<int, pcl::PointCloud<pcl::PointXYZRGB>::Ptr> _createdFeatures;
 
@@ -375,12 +402,14 @@ private:
 	bool _processingOdometry;
 
 	QTimer * _oneSecondTimer;
-	QTime * _elapsedTime;
-	QTime * _logEventTime;
+	QElapsedTimer * _elapsedTime;
+	QElapsedTimer * _logEventTime;
 
 	PdfPlotCurve * _posteriorCurve;
 	PdfPlotCurve * _likelihoodCurve;
 	PdfPlotCurve * _rawLikelihoodCurve;
+
+	MultiSessionLocWidget * _multiSessionLocWidget;
 
 	ProgressDialog * _progressDialog;
 

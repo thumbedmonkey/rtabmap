@@ -34,9 +34,10 @@ public class RTABMapLib
     
     public static native void setScreenRotation(long nativeApplication, int displayRotation, int cameraRotation);
     
-    public static native int openDatabase(long nativeApplication, String databasePath, boolean databaseInMemory, boolean optimize);
-    public static native int openDatabase2(long nativeApplication, String databaseSource, String databasePath, boolean databaseInMemory, boolean optimize);
+    public static native int openDatabase(long nativeApplication, String databasePath, boolean databaseInMemory, boolean optimize, boolean clearDatabase);
     
+    public static native boolean recover(long nativeApplication, String from, String to);
+
     public static native boolean isBuiltWith(long nativeApplication, int cameraDriver);
     public static native boolean startCamera(long nativeApplication, IBinder binder, Context context, Activity activity, int driver);
     public static native void stopCamera(long nativeApplication);
@@ -75,6 +76,7 @@ public class RTABMapLib
     public static native void setDepthFromMotion(long nativeApplication, boolean enabled);
     public static native void setCameraColor(long nativeApplication, boolean enabled);
     public static native void setAppendMode(long nativeApplication, boolean enabled);
+    public static native void setUpstreamRelocalizationAccThr(long nativeApplication, float value);
     public static native void setDataRecorderMode(long nativeApplication, boolean enabled);
     public static native void setMaxCloudDepth(long nativeApplication, float value);
     public static native void setMinCloudDepth(long nativeApplication, float value);
@@ -134,7 +136,6 @@ public class RTABMapLib
     public static native float getUpdateTime(long nativeApplication);
     public static native int getLoopClosureId(long nativeApplication);
     
-    public static native void postCameraPoseEvent(long nativeApplication, float x, float y, float z, float qx, float qy, float qz, float qw, double stamp);
     public static native void postOdometryEvent(long nativeApplication,
     		float x, float y, float z, float qx, float qy, float qz, float qw,
     		float rgb_fx, float rgb_fy, float rgb_cx, float rgb_cy,

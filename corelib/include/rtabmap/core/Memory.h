@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef MEMORY_H_
 #define MEMORY_H_
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
+#include "rtabmap/core/rtabmap_core_export.h" // DLL export/import defines
 
 #include "rtabmap/utilite/UEventsHandler.h"
 #include "rtabmap/core/Parameters.h"
@@ -55,11 +55,13 @@ class Statistics;
 class Registration;
 class RegistrationInfo;
 class RegistrationIcp;
+class RegistrationVis;
 class Stereo;
-class OccupancyGrid;
+class LocalGridMaker;
 class MarkerDetector;
+class GlobalDescriptorExtractor;
 
-class RTABMAP_EXP Memory
+class RTABMAP_CORE_EXPORT Memory
 {
 public:
 	static const int kIdStart;
@@ -205,7 +207,7 @@ public:
 			std::vector<GlobalDescriptor> & globalDescriptors) const;
 	void getNodeCalibration(int nodeId,
 			std::vector<CameraModel> & models,
-			StereoCameraModel & stereoModel) const;
+			std::vector<StereoCameraModel> & stereoModels) const;
 	std::set<int> getAllSignatureIds(bool ignoreChildren = true) const;
 	bool memoryChanged() const {return _memoryChanged;}
 	bool isIncremental() const {return _incrementalMemory;}
@@ -301,6 +303,7 @@ private:
 	bool _notLinkedNodesKeptInDb;
 	bool _saveIntermediateNodeData;
 	std::string _rgbCompressionFormat;
+	std::string _depthCompressionFormat;
 	bool _incrementalMemory;
 	bool _localizationDataSaved;
 	bool _reduceGraph;
@@ -312,6 +315,7 @@ private:
 	bool _badSignaturesIgnored;
 	bool _mapLabelsAdded;
 	bool _depthAsMask;
+	float _maskFloorThreshold;
 	bool _stereoFromMotion;
 	unsigned int _imagePreDecimation;
 	unsigned int _imagePostDecimation;
@@ -320,15 +324,19 @@ private:
 	float _laserScanVoxelSize;
 	int _laserScanNormalK;
 	float _laserScanNormalRadius;
+	float _laserScanGroundNormalsUp;
 	bool _reextractLoopClosureFeatures;
 	bool _localBundleOnLoopClosure;
+	bool _invertedReg;
 	float _rehearsalMaxDistance;
 	float _rehearsalMaxAngle;
 	bool _rehearsalWeightIgnoredWhileMoving;
 	bool _useOdometryFeatures;
 	bool _useOdometryGravity;
+	bool _rotateImagesUpsideUp;
 	bool _createOccupancyGrid;
 	int _visMaxFeatures;
+	bool _visSSC;
 	bool _imagesAlreadyRectified;
 	bool _rectifyOnlyFeatures;
 	bool _covOffDiagonalIgnored;
@@ -346,7 +354,7 @@ private:
 	bool _allNodesInWM;
 	GPS _gpsOrigin;
 	std::vector<CameraModel> _rectCameraModels;
-	StereoCameraModel _rectStereoCameraModel;
+	std::vector<StereoCameraModel> _rectStereoCameraModels;
 	std::vector<double> _odomMaxInf;
 
 	std::map<int, Signature *> _signatures; // TODO : check if a signature is already added? although it is not supposed to occur...
@@ -366,10 +374,13 @@ private:
 
 	Registration * _registrationPipeline;
 	RegistrationIcp * _registrationIcpMulti;
+	RegistrationVis * _registrationVis;
 
-	OccupancyGrid * _occupancy;
+	LocalGridMaker * _localMapMaker;
 
 	MarkerDetector * _markerDetector;
+
+	GlobalDescriptorExtractor * _globalDescriptorExtractor;
 };
 
 } // namespace rtabmap

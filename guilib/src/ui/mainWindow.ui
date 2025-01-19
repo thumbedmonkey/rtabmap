@@ -105,16 +105,6 @@
      <property name="title">
       <string>Select source</string>
      </property>
-     <widget class="QMenu" name="menuImage">
-      <property name="title">
-       <string>RGB camera</string>
-      </property>
-      <property name="icon">
-       <iconset resource="../GuiLib.qrc">
-        <normaloff>:/images/webcam.png</normaloff>:/images/webcam.png</iconset>
-      </property>
-      <addaction name="actionUsbCamera"/>
-     </widget>
      <widget class="QMenu" name="menuRGB_D_camera">
       <property name="title">
        <string>RGB-D camera</string>
@@ -229,8 +219,29 @@
        </property>
        <addaction name="actionRealSense2_L515"/>
       </widget>
+      <widget class="QMenu" name="menuOrbbec_Astra">
+       <property name="title">
+        <string>Orbbec Astra</string>
+       </property>
+       <property name="icon">
+        <iconset resource="../GuiLib.qrc">
+         <normaloff>:/images/astra.png</normaloff>:/images/astra.png</iconset>
+       </property>
+       <addaction name="actionOpenNI2_orbbec"/>
+      </widget>
+      <widget class="QMenu" name="menuXvisio_SeerSense">
+       <property name="title">
+        <string>Xvisio SeerSense</string>
+       </property>
+       <property name="icon">
+        <iconset resource="../GuiLib.qrc">
+         <normaloff>:/images/seer_sense_DS80.png</normaloff>:/images/seer_sense_DS80.png</iconset>
+       </property>
+       <addaction name="actionXvisio_SeerSense"/>
+      </widget>
       <addaction name="menuKinect_for_Xbox_360"/>
       <addaction name="menuXtion_PRO_LIVE"/>
+      <addaction name="menuOrbbec_Astra"/>
       <addaction name="menuSense_3D_scanner"/>
       <addaction name="menuKinect_v2"/>
       <addaction name="menuKinect_K4A"/>
@@ -239,6 +250,7 @@
       <addaction name="menuRealSense_SR300"/>
       <addaction name="menuRealSense_D435"/>
       <addaction name="menuRealSense_L515"/>
+      <addaction name="menuXvisio_SeerSense"/>
      </widget>
      <widget class="QMenu" name="menuStereo_camera">
       <property name="title">
@@ -309,7 +321,27 @@
         <iconset resource="../GuiLib.qrc">
          <normaloff>:/images/oakd.png</normaloff>:/images/oakd.png</iconset>
        </property>
-       <addaction name="actionDepthAI"/>
+       <addaction name="actionDepthAI_oakd"/>
+      </widget>
+      <widget class="QMenu" name="menuOAK_D_Lite">
+       <property name="title">
+        <string>OAK-D Lite</string>
+       </property>
+       <property name="icon">
+        <iconset resource="../GuiLib.qrc">
+         <normaloff>:/images/oakd_lite.png</normaloff>:/images/oakd_lite.png</iconset>
+       </property>
+       <addaction name="actionDepthAI_oakdlite"/>
+      </widget>
+      <widget class="QMenu" name="menuOAK_D_Pro">
+       <property name="title">
+        <string>OAK-D Pro</string>
+       </property>
+       <property name="icon">
+        <iconset resource="../GuiLib.qrc">
+         <normaloff>:/images/oakdpro.png</normaloff>:/images/oakdpro.png</iconset>
+       </property>
+       <addaction name="actionDepthAI_oakdpro"/>
       </widget>
       <addaction name="menuBumblebee2_2"/>
       <addaction name="menuZed_camera"/>
@@ -317,10 +349,18 @@
       <addaction name="menuRealSense_T265"/>
       <addaction name="menuMynt_Eye_S"/>
       <addaction name="menuOAK_D"/>
+      <addaction name="menuOAK_D_Lite"/>
+      <addaction name="menuOAK_D_Pro"/>
+     </widget>
+     <widget class="QMenu" name="menuLiDAR">
+      <property name="title">
+       <string>LiDAR</string>
+      </property>
+      <addaction name="actionVelodyne_VLP_16"/>
      </widget>
      <addaction name="menuRGB_D_camera"/>
      <addaction name="menuStereo_camera"/>
-     <addaction name="menuImage"/>
+     <addaction name="menuLiDAR"/>
      <addaction name="actionMore_options"/>
     </widget>
     <addaction name="menuSelect_source"/>
@@ -340,6 +380,7 @@
     <addaction name="actionTrigger_a_new_map"/>
     <addaction name="separator"/>
     <addaction name="actionLabel_current_location"/>
+    <addaction name="actionRemove_label"/>
     <addaction name="actionSend_waypoints"/>
     <addaction name="actionSend_goal"/>
     <addaction name="actionCancel_goal"/>
@@ -397,9 +438,6 @@
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <widget class="QDockWidget" name="dockWidget_posterior">
-   <property name="features">
-    <set>QDockWidget::AllDockWidgetFeatures</set>
-   </property>
    <property name="windowTitle">
     <string>A posteriori PDF</string>
    </property>
@@ -1032,6 +1070,33 @@
    <addaction name="actionPause"/>
    <addaction name="actionStop"/>
   </widget>
+  <widget class="QDockWidget" name="dockWidget_multiSessionLoc">
+   <property name="windowTitle">
+    <string>Multi-Session Localization</string>
+   </property>
+   <attribute name="dockWidgetArea">
+    <number>2</number>
+   </attribute>
+   <widget class="QWidget" name="layout_multiSessionLoc">
+    <layout class="QVBoxLayout" name="verticalLayout_12">
+     <property name="spacing">
+      <number>0</number>
+     </property>
+     <property name="leftMargin">
+      <number>0</number>
+     </property>
+     <property name="topMargin">
+      <number>0</number>
+     </property>
+     <property name="rightMargin">
+      <number>0</number>
+     </property>
+     <property name="bottomMargin">
+      <number>0</number>
+     </property>
+    </layout>
+   </widget>
+  </widget>
   <action name="actionExit">
    <property name="icon">
     <iconset resource="../GuiLib.qrc">
@@ -1192,18 +1257,6 @@
   <action name="action240p">
    <property name="text">
     <string>240p</string>
-   </property>
-  </action>
-  <action name="actionUsbCamera">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="icon">
-    <iconset resource="../GuiLib.qrc">
-     <normaloff>:/images/webcam.png</normaloff>:/images/webcam.png</iconset>
-   </property>
-   <property name="text">
-    <string>Usb camera</string>
    </property>
   </action>
   <action name="actionPrint_loop_closure_IDs_to_console">
@@ -1638,7 +1691,7 @@
     <string>Zed Open Capture</string>
    </property>
   </action>
-  <action name="actionDepthAI">
+  <action name="actionDepthAI_oakd">
    <property name="checkable">
     <bool>true</bool>
    </property>
@@ -1649,6 +1702,51 @@
   <action name="actionRGBD_SLAM_ID_format_txt">
    <property name="text">
     <string>RGBD-SLAM + ID format (*.txt)</string>
+   </property>
+  </action>
+  <action name="actionOpenNI2_orbbec">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>OpenNI2</string>
+   </property>
+  </action>
+  <action name="actionRemove_label">
+   <property name="text">
+    <string>Remove label...</string>
+   </property>
+  </action>
+  <action name="actionDepthAI_oakdlite">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Depth AI</string>
+   </property>
+  </action>
+  <action name="actionDepthAI_oakdpro">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Depth AI</string>
+   </property>
+  </action>
+  <action name="actionVelodyne_VLP_16">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Velodyne VLP-16</string>
+   </property>
+  </action>
+  <action name="actionXvisio_SeerSense">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Xvisio</string>
    </property>
   </action>
  </widget>

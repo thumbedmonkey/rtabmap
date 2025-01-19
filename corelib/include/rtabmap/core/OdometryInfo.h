@@ -50,6 +50,7 @@ public:
 		localBundleConstraints(0),
 		localBundleTime(0),
 		keyFrameAdded(false),
+		timeDeskewing(0.0f),
 		timeEstimation(0.0f),
 		timeParticleFiltering(0.0f),
 		stamp(0),
@@ -76,6 +77,7 @@ public:
 		output.localBundlePoses = localBundlePoses;
 		output.localBundleModels = localBundleModels;
 		output.keyFrameAdded = keyFrameAdded;
+		output.timeDeskewing = timeDeskewing;
 		output.timeEstimation = timeEstimation;
 		output.timeParticleFiltering = timeParticleFiltering;
 		output.stamp = stamp;
@@ -103,8 +105,9 @@ public:
 	int localBundleConstraints;
 	float localBundleTime;
 	std::map<int, Transform> localBundlePoses;
-	std::map<int, CameraModel> localBundleModels;
+	std::map<int, std::vector<CameraModel> > localBundleModels;
 	bool keyFrameAdded;
+	float timeDeskewing;
 	float timeEstimation;
 	float timeParticleFiltering;
 	double stamp;

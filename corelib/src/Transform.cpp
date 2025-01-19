@@ -211,14 +211,38 @@ Transform Transform::to3DoF() const
 {
 	float x,y,z,roll,pitch,yaw;
 	this->getTranslationAndEulerAngles(x,y,z,roll,pitch,yaw);
-	return Transform(x,y,0, 0,0,yaw);
+	float A = std::cos(yaw);
+	float B = std::sin(yaw);
+	return Transform(
+			A,-B, 0, x,
+			B, A, 0, y,
+			0, 0, 1, 0);
 }
 
 Transform Transform::to4DoF() const
 {
 	float x,y,z,roll,pitch,yaw;
 	this->getTranslationAndEulerAngles(x,y,z,roll,pitch,yaw);
-	return Transform(x,y,z, 0,0,yaw);
+	float A = std::cos(yaw);
+	float B = std::sin(yaw);
+	return Transform(
+			A,-B, 0, x,
+			B, A, 0, y,
+			0, 0, 1, z);
+}
+
+bool Transform::is3DoF() const
+{
+	return is4DoF() && z() == 0.0;
+}
+
+bool Transform::is4DoF() const
+{
+	return r13() == 0.0 &&
+		   r23() == 0.0 &&
+		   r31() == 0.0 &&
+		   r32() == 0.0 &&
+		   r33() == 1.0;
 }
 
 cv::Mat Transform::rotationMatrix() const
@@ -422,6 +446,19 @@ Transform Transform::fromEigen3f(const Eigen::Isometry3f & matrix)
 					 matrix(2,0), matrix(2,1), matrix(2,2), matrix(2,3));
 }
 Transform Transform::fromEigen3d(const Eigen::Isometry3d & matrix)
+{
+	return Transform(matrix(0,0), matrix(0,1), matrix(0,2), matrix(0,3),
+					 matrix(1,0), matrix(1,1), matrix(1,2), matrix(1,3),
+					 matrix(2,0), matrix(2,1), matrix(2,2), matrix(2,3));
+}
+
+Transform Transform::fromEigen3f(const Eigen::Matrix<float, 3, 4> & matrix)
+{
+	return Transform(matrix(0,0), matrix(0,1), matrix(0,2), matrix(0,3),
+					 matrix(1,0), matrix(1,1), matrix(1,2), matrix(1,3),
+					 matrix(2,0), matrix(2,1), matrix(2,2), matrix(2,3));
+}
+Transform Transform::fromEigen3d(const Eigen::Matrix<double, 3, 4> & matrix)
 {
 	return Transform(matrix(0,0), matrix(0,1), matrix(0,2), matrix(0,3),
 					 matrix(1,0), matrix(1,1), matrix(1,2), matrix(1,3),

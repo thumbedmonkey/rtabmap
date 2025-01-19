@@ -41,7 +41,7 @@ class Signature;
 class Registration;
 class Optimizer;
 
-class RTABMAP_EXP OdometryF2M : public Odometry
+class RTABMAP_CORE_EXPORT OdometryF2M : public Odometry
 {
 public:
 	OdometryF2M(const rtabmap::ParametersMap & parameters = rtabmap::ParametersMap());
@@ -83,7 +83,7 @@ private:
 	std::map<int, Transform> bundlePoses_;
 	std::multimap<int, Link> bundleLinks_;
 	std::multimap<int, Link> bundleIMUOrientations_;
-	std::map<int, CameraModel> bundleModels_;
+	std::map<int, std::vector<CameraModel> > bundleModels_;
 	std::map<int, int> bundlePoseReferences_;
 	int bundleSeq_;
 	Optimizer * sba_;

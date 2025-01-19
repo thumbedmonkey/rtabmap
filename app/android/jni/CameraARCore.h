@@ -50,36 +50,17 @@ namespace rtabmap {
 
 class CameraARCore : public CameraMobile {
 public:
-	static LaserScan scanFromPointCloudData(
-			const float * pointCloudData,
-			int points,
-			const Transform & pose,
-			const CameraModel & model,
-			const cv::Mat & rgb,
-			std::vector<cv::KeyPoint> * kpts = 0,
-			std::vector<cv::Point3f> * kpts3D = 0);
-
-public:
-	CameraARCore(void* env, void* context, void* activity, bool depthFromMotion = false, bool smoothing = false);
+	CameraARCore(void* env, void* context, void* activity, bool depthFromMotion = false, bool smoothing = false, float upstreamRelocalizationAccThr = 0.0f);
 	virtual ~CameraARCore();
-
-	bool uvsInitialized() const {return uvs_initialized_;}
-	const float* uvsTransformed() const {return transformed_uvs_;}
-	void getVPMatrices(glm::mat4 & view, glm::mat4 & projection) const {view=viewMatrix_; projection=projectionMatrix_;}
 
 	virtual void setScreenRotationAndSize(ScreenRotation colorCameraToDisplayRotation, int width, int height);
 
 	virtual bool init(const std::string & calibrationFolder = ".", const std::string & cameraName = "");
-	void setupGL();
-	virtual void close(); // close Tango connection
+	virtual void close(); // close ARCore connection
 	virtual std::string getSerial() const;
-	GLuint getTextureId() const {return textureId_;}
-
-	void imageCallback(AImageReader *reader);
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0); // should be called in opengl thread
-	virtual void capturePoseOnly();
+	virtual SensorData updateDataOnRender(Transform & pose); // should be called in opengl thread
 
 private:
 	rtabmap::Transform getPoseAtTimestamp(double timestamp);

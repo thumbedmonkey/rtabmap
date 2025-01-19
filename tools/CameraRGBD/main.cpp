@@ -65,6 +65,7 @@ void showUsage()
 			"                                     13=MYNT EYE S\n"
 			"                                     14=ZED Open Capture\n"
 			"                                     15=depthai-core\n"
+			"                                     16=XVSDK     (SeerSense)\n"
 			"  Options:\n"
 			"      -rate #.#                      Input rate Hz (default 0=inf)\n"
 			"      -device #                      Device ID (number or string)\n"
@@ -334,6 +335,15 @@ int main(int argc, char * argv[])
 		}
 		camera = new rtabmap::CameraDepthAI(deviceId);
 	}
+	else if (driver == 16)
+	{
+		if (!rtabmap::CameraSeerSense::available())
+		{
+			UERROR("Not built with XVisio SDK support...");
+			exit(-1);
+		}
+		camera = new rtabmap::CameraSeerSense();
+	}
 	else
 	{
 		UFATAL("");
@@ -346,7 +356,7 @@ int main(int argc, char * argv[])
 		exit(1);
 	}
 
-	rtabmap::SensorData data = camera->takeImage();
+	rtabmap::SensorData data = camera->takeData();
 	if (data.imageRaw().empty())
 	{
 		printf("Cloud not get frame from the camera!\n");
@@ -359,7 +369,8 @@ int main(int argc, char * argv[])
 				data.imageRaw().cols, data.imageRaw().rows, data.depthOrRightRaw().cols, data.depthOrRightRaw().rows);
 	}
 	pcl::visualization::CloudViewer * viewer = 0;
-	if(!data.stereoCameraModel().isValidForProjection() && (data.cameraModels().size() == 0 || !data.cameraModels()[0].isValidForProjection()))
+	if((data.stereoCameraModels().empty() || data.stereoCameraModels()[0].isValidForProjection()) &&
+	   (data.cameraModels().empty() || !data.cameraModels()[0].isValidForProjection()))
 	{
 		UWARN("Camera not calibrated! The registered cloud cannot be shown.");
 	}
@@ -465,7 +476,7 @@ int main(int argc, char * argv[])
 			cv::imshow("Left", rgb); // show frame
 			cv::imshow("Right", right);
 
-			if(rgb.cols == right.cols && rgb.rows == right.rows && data.stereoCameraModel().isValidForProjection())
+			if(rgb.cols == right.cols && rgb.rows == right.rows && data.stereoCameraModels().size()==1 && data.stereoCameraModels()[0].isValidForProjection())
 			{
 				if(right.channels() == 3)
 				{
@@ -473,8 +484,8 @@ int main(int argc, char * argv[])
 				}
 				pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud = rtabmap::util3d::cloudFromStereoImages(
 						rgb, right,
-						data.stereoCameraModel());
-				cloud = rtabmap::util3d::transformPointCloud(cloud, rtabmap::Transform::opengl_T_rtabmap()*data.stereoCameraModel().localTransform());
+						data.stereoCameraModels()[0]);
+				cloud = rtabmap::util3d::transformPointCloud(cloud, rtabmap::Transform::opengl_T_rtabmap()*data.stereoCameraModels()[0].localTransform());
 				if(viewer)
 					viewer->showCloud(cloud, "cloud");
 			}
@@ -521,7 +532,7 @@ int main(int argc, char * argv[])
 			printf("Saved frames %d to \"%s/left\" and \"%s/right\" directories\n", id, stereoSavePath.c_str(), stereoSavePath.c_str());
 		}
 		++id;
-		data = camera->takeImage();
+		data = camera->takeData();
 	}
 	printf("Closing...\n");
 	if(viewer)

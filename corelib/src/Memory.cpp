@@ -40,6 +40,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <rtabmap/core/EpipolarGeometry.h>
 #include "rtabmap/core/VisualWord.h"
 #include "rtabmap/core/Features2d.h"
+#include "rtabmap/core/GlobalDescriptorExtractor.h"
 #include "rtabmap/core/RegistrationIcp.h"
 #include "rtabmap/core/Registration.h"
 #include "rtabmap/core/RegistrationVis.h"
@@ -60,9 +61,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "rtabmap/core/optimizer/OptimizerG2O.h"
 #include <pcl/io/pcd_io.h>
 #include <pcl/common/common.h>
-#include <rtabmap/core/OccupancyGrid.h>
 #include <rtabmap/core/MarkerDetector.h>
 #include <opencv2/imgproc/types_c.h>
+#include <rtabmap/core/LocalGridMaker.h>
 
 namespace rtabmap {
 
@@ -79,6 +80,7 @@ Memory::Memory(const ParametersMap & parameters) :
 	_notLinkedNodesKeptInDb(Parameters::defaultMemNotLinkedNodesKept()),
 	_saveIntermediateNodeData(Parameters::defaultMemIntermediateNodeDataKept()),
 	_rgbCompressionFormat(Parameters::defaultMemImageCompressionFormat()),
+	_depthCompressionFormat(Parameters::defaultMemDepthCompressionFormat()),
 	_incrementalMemory(Parameters::defaultMemIncrementalMemory()),
 	_localizationDataSaved(Parameters::defaultMemLocalizationDataSaved()),
 	_reduceGraph(Parameters::defaultMemReduceGraph()),
@@ -90,6 +92,7 @@ Memory::Memory(const ParametersMap & parameters) :
 	_badSignaturesIgnored(Parameters::defaultMemBadSignaturesIgnored()),
 	_mapLabelsAdded(Parameters::defaultMemMapLabelsAdded()),
 	_depthAsMask(Parameters::defaultMemDepthAsMask()),
+	_maskFloorThreshold(Parameters::defaultMemDepthMaskFloorThr()),
 	_stereoFromMotion(Parameters::defaultMemStereoFromMotion()),
     _imagePreDecimation(Parameters::defaultMemImagePreDecimation()),
 	_imagePostDecimation(Parameters::defaultMemImagePostDecimation()),
@@ -98,15 +101,19 @@ Memory::Memory(const ParametersMap & parameters) :
 	_laserScanVoxelSize(Parameters::defaultMemLaserScanVoxelSize()),
 	_laserScanNormalK(Parameters::defaultMemLaserScanNormalK()),
 	_laserScanNormalRadius(Parameters::defaultMemLaserScanNormalRadius()),
+	_laserScanGroundNormalsUp(Parameters::defaultIcpPointToPlaneGroundNormalsUp()),
 	_reextractLoopClosureFeatures(Parameters::defaultRGBDLoopClosureReextractFeatures()),
 	_localBundleOnLoopClosure(Parameters::defaultRGBDLocalBundleOnLoopClosure()),
+	_invertedReg(Parameters::defaultRGBDInvertedReg()),
 	_rehearsalMaxDistance(Parameters::defaultRGBDLinearUpdate()),
 	_rehearsalMaxAngle(Parameters::defaultRGBDAngularUpdate()),
 	_rehearsalWeightIgnoredWhileMoving(Parameters::defaultMemRehearsalWeightIgnoredWhileMoving()),
 	_useOdometryFeatures(Parameters::defaultMemUseOdomFeatures()),
 	_useOdometryGravity(Parameters::defaultMemUseOdomGravity()),
+	_rotateImagesUpsideUp(Parameters::defaultMemRotateImagesUpsideUp()),
 	_createOccupancyGrid(Parameters::defaultRGBDCreateOccupancyGrid()),
 	_visMaxFeatures(Parameters::defaultVisMaxFeatures()),
+	_visSSC(Parameters::defaultVisSSC()),
 	_imagesAlreadyRectified(Parameters::defaultRtabmapImagesAlreadyRectified()),
 	_rectifyOnlyFeatures(Parameters::defaultRtabmapRectifyOnlyFeatures()),
 	_covOffDiagonalIgnored(Parameters::defaultMemCovOffDiagIgnored()),
@@ -121,14 +128,23 @@ Memory::Memory(const ParametersMap & parameters) :
 	_linksChanged(false),
 	_signaturesAdded(0),
 	_allNodesInWM(true),
-
 	_badSignRatio(Parameters::defaultKpBadSignRatio()),
 	_tfIdfLikelihoodUsed(Parameters::defaultKpTfIdfLikelihoodUsed()),
-	_parallelized(Parameters::defaultKpParallelized())
+	_parallelized(Parameters::defaultKpParallelized()),
+	_registrationVis(0)
 {
 	_feature2D = Feature2D::create(parameters);
 	_vwd = new VWDictionary(parameters);
 	_registrationPipeline = Registration::create(parameters);
+	_globalDescriptorExtractor = GlobalDescriptorExtractor::create(parameters);
+	if(!_registrationPipeline->isImageRequired())
+	{
+		// make sure feature matching is used instead of optical flow to compute the guess
+		ParametersMap tmp = parameters;
+		uInsert(tmp, ParametersPair(Parameters::kVisCorType(), "0"));
+		uInsert(tmp, ParametersPair(Parameters::kRegRepeatOnce(), "false"));
+		_registrationVis = new RegistrationVis(tmp);
+	}
 
 	// for local scan matching, correspondences ratio should be two times higher as we expect more matches
 	float corRatio = Parameters::defaultIcpCorrespondenceRatio();
@@ -143,7 +159,7 @@ Memory::Memory(const ParametersMap & parameters) :
 	}
 	_registrationIcpMulti = new RegistrationIcp(paramsMulti);
 
-	_occupancy = new OccupancyGrid(parameters);
+	_localMapMaker = new LocalGridMaker(parameters);
 	_markerDetector = new MarkerDetector(parameters);
 	this->parseParameters(parameters);
 }
@@ -273,6 +289,10 @@ void Memory::loadDataFromDb(bool postInitClosingEvents)
                                           -landmarkId, inserted.first->second, landmarkSize.at<float>(0,0));
                                 }
                             }
+							else
+							{
+								UDEBUG("Caching landmark size %f for %d", landmarkSize.at<float>(0,0), -landmarkId);
+							}
                         }
 
                         std::map<int, std::set<int> >::iterator nter = _landmarksIndex.find(landmarkId);
@@ -530,7 +550,8 @@ Memory::~Memory()
 	delete _vwd;
 	delete _registrationPipeline;
 	delete _registrationIcpMulti;
-	delete _occupancy;
+	delete _registrationVis;
+	delete _localMapMaker;
 }
 
 void Memory::parseParameters(const ParametersMap & parameters)
@@ -548,6 +569,7 @@ void Memory::parseParameters(const ParametersMap & parameters)
 	Parameters::parse(params, Parameters::kMemNotLinkedNodesKept(), _notLinkedNodesKeptInDb);
 	Parameters::parse(params, Parameters::kMemIntermediateNodeDataKept(), _saveIntermediateNodeData);
 	Parameters::parse(params, Parameters::kMemImageCompressionFormat(), _rgbCompressionFormat);
+	Parameters::parse(params, Parameters::kMemDepthCompressionFormat(), _depthCompressionFormat);
 	Parameters::parse(params, Parameters::kMemRehearsalIdUpdatedToNewOne(), _idUpdatedToNewOneRehearsal);
 	Parameters::parse(params, Parameters::kMemGenerateIds(), _generateIds);
 	Parameters::parse(params, Parameters::kMemBadSignaturesIgnored(), _badSignaturesIgnored);
@@ -557,6 +579,7 @@ void Memory::parseParameters(const ParametersMap & parameters)
 	Parameters::parse(params, Parameters::kMemTransferSortingByWeightId(), _transferSortingByWeightId);
 	Parameters::parse(params, Parameters::kMemSTMSize(), _maxStMemSize);
 	Parameters::parse(params, Parameters::kMemDepthAsMask(), _depthAsMask);
+	Parameters::parse(params, Parameters::kMemDepthMaskFloorThr(), _maskFloorThreshold);
 	Parameters::parse(params, Parameters::kMemStereoFromMotion(), _stereoFromMotion);
 	Parameters::parse(params, Parameters::kMemImagePreDecimation(), _imagePreDecimation);
 	Parameters::parse(params, Parameters::kMemImagePostDecimation(), _imagePostDecimation);
@@ -565,15 +588,27 @@ void Memory::parseParameters(const ParametersMap & parameters)
 	Parameters::parse(params, Parameters::kMemLaserScanVoxelSize(), _laserScanVoxelSize);
 	Parameters::parse(params, Parameters::kMemLaserScanNormalK(), _laserScanNormalK);
 	Parameters::parse(params, Parameters::kMemLaserScanNormalRadius(), _laserScanNormalRadius);
+	Parameters::parse(params, Parameters::kIcpPointToPlaneGroundNormalsUp(), _laserScanGroundNormalsUp);
 	Parameters::parse(params, Parameters::kRGBDLoopClosureReextractFeatures(), _reextractLoopClosureFeatures);
 	Parameters::parse(params, Parameters::kRGBDLocalBundleOnLoopClosure(), _localBundleOnLoopClosure);
+	Parameters::parse(params, Parameters::kRGBDInvertedReg(), _invertedReg);
+	if(_invertedReg && _localBundleOnLoopClosure)
+	{
+		UWARN("%s and %s cannot be used at the same time, disabling %s...",
+				Parameters::kRGBDLocalBundleOnLoopClosure().c_str(),
+				Parameters::kRGBDInvertedReg().c_str(),
+				Parameters::kRGBDLocalBundleOnLoopClosure().c_str());
+		_localBundleOnLoopClosure = false;
+	}
 	Parameters::parse(params, Parameters::kRGBDLinearUpdate(), _rehearsalMaxDistance);
 	Parameters::parse(params, Parameters::kRGBDAngularUpdate(), _rehearsalMaxAngle);
 	Parameters::parse(params, Parameters::kMemRehearsalWeightIgnoredWhileMoving(), _rehearsalWeightIgnoredWhileMoving);
 	Parameters::parse(params, Parameters::kMemUseOdomFeatures(), _useOdometryFeatures);
 	Parameters::parse(params, Parameters::kMemUseOdomGravity(), _useOdometryGravity);
+	Parameters::parse(params, Parameters::kMemRotateImagesUpsideUp(), _rotateImagesUpsideUp);
 	Parameters::parse(params, Parameters::kRGBDCreateOccupancyGrid(), _createOccupancyGrid);
 	Parameters::parse(params, Parameters::kVisMaxFeatures(), _visMaxFeatures);
+	Parameters::parse(params, Parameters::kVisSSC(), _visSSC);
 	Parameters::parse(params, Parameters::kRtabmapImagesAlreadyRectified(), _imagesAlreadyRectified);
 	Parameters::parse(params, Parameters::kRtabmapRectifyOnlyFeatures(), _rectifyOnlyFeatures);
 	Parameters::parse(params, Parameters::kMemCovOffDiagIgnored(), _covOffDiagonalIgnored);
@@ -645,12 +680,28 @@ void Memory::parseParameters(const ParametersMap & parameters)
 	uInsert(parameters_, ParametersPair(Parameters::kVisCorType(), "0"));
 	uInsert(params, ParametersPair(Parameters::kVisCorType(), "0"));
 
+	Registration::Type currentStrategy = Registration::kTypeUndef;
+	if(_registrationPipeline)
+	{
+		if(_registrationPipeline->isImageRequired() && _registrationPipeline->isScanRequired())
+		{
+			currentStrategy = Registration::kTypeVisIcp;
+		}
+		else if(_registrationPipeline->isImageRequired())
+		{
+			currentStrategy = Registration::kTypeVis;
+		}
+		else if(_registrationPipeline->isScanRequired())
+		{
+			currentStrategy = Registration::kTypeIcp;
+		}
+	}
 	Registration::Type regStrategy = Registration::kTypeUndef;
 	if((iter=params.find(Parameters::kRegStrategy())) != params.end())
 	{
 		regStrategy = (Registration::Type)std::atoi((*iter).second.c_str());
 	}
-	if(regStrategy!=Registration::kTypeUndef)
+	if(regStrategy!=Registration::kTypeUndef && regStrategy != currentStrategy)
 	{
 		UDEBUG("new registration strategy %d", int(regStrategy));
 		if(_registrationPipeline)
@@ -660,10 +711,29 @@ void Memory::parseParameters(const ParametersMap & parameters)
 		}
 
 		_registrationPipeline = Registration::create(regStrategy, parameters_);
+
+		if(!_registrationPipeline->isImageRequired() && _registrationVis == 0)
+		{
+			ParametersMap tmp = params;
+			uInsert(tmp, ParametersPair(Parameters::kRegRepeatOnce(), "false"));
+			_registrationVis = new RegistrationVis(tmp);
+		}
+		else if(_registrationPipeline->isImageRequired() && _registrationVis)
+		{
+			delete _registrationVis;
+			_registrationVis = 0;
+		}
 	}
 	else if(_registrationPipeline)
 	{
 		_registrationPipeline->parseParameters(params);
+
+		if(_registrationVis)
+		{
+			ParametersMap tmp = params;
+			uInsert(tmp, ParametersPair(Parameters::kRegRepeatOnce(), "false"));
+			_registrationVis->parseParameters(tmp);
+		}
 	}
 
 	if(_registrationIcpMulti)
@@ -689,14 +759,30 @@ void Memory::parseParameters(const ParametersMap & parameters)
 		}
 	}
 
-	if(_occupancy)
+	if(_localMapMaker)
 	{
-		_occupancy->parseParameters(params);
+		_localMapMaker->parseParameters(params);
 	}
 
 	if(_markerDetector)
 	{
 		_markerDetector->parseParameters(params);
+	}
+
+	int globalDescriptorStrategy = -1;
+	Parameters::parse(params, Parameters::kMemGlobalDescriptorStrategy(), globalDescriptorStrategy);
+	if(globalDescriptorStrategy != -1 &&
+			(_globalDescriptorExtractor==0 || (int)_globalDescriptorExtractor->getType() != globalDescriptorStrategy))
+	{
+		if(_globalDescriptorExtractor)
+		{
+			delete _globalDescriptorExtractor;
+		}
+		_globalDescriptorExtractor = GlobalDescriptorExtractor::create(parameters_);
+	}
+	else if(_globalDescriptorExtractor)
+	{
+		_globalDescriptorExtractor->parseParameters(params);
 	}
 
 	// do this after all params are parsed
@@ -1135,7 +1221,10 @@ void Memory::moveSignatureToWMFromSTM(int id, int * reducedTo)
 					}
 				}
 
-				this->moveToTrash(s, false);
+				// Setting true to make sure we save all visual
+				// words that could be referenced in a previously
+				// transferred node in LTM (#979)
+				this->moveToTrash(s, true);
 				s = 0;
 			}
 		}
@@ -1766,7 +1855,7 @@ void Memory::clear()
 	_linksChanged = false;
 	_gpsOrigin = GPS();
 	_rectCameraModels.clear();
-	_rectStereoCameraModel = StereoCameraModel();
+	_rectStereoCameraModels.clear();
 	_odomMaxInf.clear();
 	_groundTruths.clear();
 	_labels.clear();
@@ -2523,6 +2612,14 @@ int Memory::getSignatureIdByLabel(const std::string & label, bool lookInDatabase
 		if(id == 0 && _dbDriver && lookInDatabase)
 		{
 			_dbDriver->getNodeIdByLabel(label, id);
+			if(_signatures.find(id) != _signatures.end())
+			{
+				// The signature is already in WM, but label was not
+				// found above. It means the label has been cleared in
+				// current session (not yet saved to database), so return
+				// not found.
+				id = 0;
+			}
 		}
 	}
 	return id;
@@ -2532,15 +2629,35 @@ bool Memory::labelSignature(int id, const std::string & label)
 {
 	// verify that this label is not used
 	int idFound=getSignatureIdByLabel(label);
+	if(idFound == 0 && label.empty() && _labels.find(id)==_labels.end())
+	{
+		UWARN("Trying to remove label from node %d but it has already no label", id);
+		return false;
+	}
 	if(idFound == 0 || idFound == id)
 	{
 		Signature * s  = this->_getSignature(id);
 		if(s)
 		{
-			uInsert(_labels, std::make_pair(s->id(), label));
+			if(label.empty())
+			{
+				UWARN("Label \"%s\" removed from node %d", _labels.at(id).c_str(), id);
+				_labels.erase(id);
+			}
+			else
+			{
+				if(_labels.find(id)!=_labels.end())
+				{
+					UWARN("Label \"%s\" set to node %d (previously labeled \"%s\")", label.c_str(), id, _labels.at(id).c_str());
+				}
+				else
+				{
+					UWARN("Label \"%s\" set to node %d", label.c_str(), id);
+				}
+				uInsert(_labels, std::make_pair(s->id(), label));
+			}
 			s->setLabel(label);
 			_linksChanged = s->isSaved(); // HACK to get label updated in Localization mode
-			UWARN("Label \"%s\" set to node %d", label.c_str(), id);
 			return true;
 		}
 		else if(_dbDriver)
@@ -2551,9 +2668,25 @@ bool Memory::labelSignature(int id, const std::string & label)
 			_dbDriver->loadSignatures(ids,signatures);
 			if(signatures.size())
 			{
-				uInsert(_labels, std::make_pair(signatures.front()->id(), label));
+				if(label.empty())
+				{
+					UWARN("Label \"%s\" removed from node %d", _labels.at(id).c_str(), id);
+					_labels.erase(id);
+				}
+				else
+				{
+					if(_labels.find(id)!=_labels.end())
+					{
+						UWARN("Label \"%s\" set to node %d (previously labeled \"%s\")", label.c_str(), id, _labels.at(id).c_str());
+					}
+					else
+					{
+						UWARN("Label \"%s\" set to node %d", label.c_str(), id);
+					}
+					uInsert(_labels, std::make_pair(id, label));
+				}
+
 				signatures.front()->setLabel(label);
-				UWARN("Label \"%s\" set to node %d", label.c_str(), id);
 				_dbDriver->asyncSave(signatures.front()); // move it again to trash
 				return true;
 			}
@@ -2565,7 +2698,7 @@ bool Memory::labelSignature(int id, const std::string & label)
 	}
 	else if(idFound)
 	{
-		UWARN("Node %d has already label \"%s\"", idFound, label.c_str());
+		UWARN("Another node %d has already label \"%s\", cannot set it to node %d", idFound, label.c_str(), id);
 	}
 	return false;
 }
@@ -2664,6 +2797,19 @@ void Memory::removeLink(int oldId, int newId)
 			UERROR("Signatures %d and %d don't have bidirectional link!", oldS->id(), newS->id());
 		}
 	}
+	else if(this->_getSignature(newId<0?oldId:newId))
+	{
+		int landmarkId = newId<0?newId:oldId;
+		Signature * s = this->_getSignature(newId<0?oldId:newId);
+		s->removeLandmark(newId<0?newId:oldId);
+		_linksChanged = true;
+		// Update landmark index
+		std::map<int, std::set<int> >::iterator nter = _landmarksIndex.find(landmarkId);
+		if(nter!=_landmarksIndex.end())
+		{
+			nter->second.erase(s->id());
+		}
+	}
 	else
 	{
 		if(!newS)
@@ -2732,13 +2878,13 @@ Transform Memory::computeTransform(
 
 	// make sure we have all data needed
 	// load binary data from database if not in RAM (if image is already here, scan and userData should be or they are null)
-	if(((_reextractLoopClosureFeatures && _registrationPipeline->isImageRequired()) && fromS.sensorData().imageCompressed().empty()) ||
+	if(((_reextractLoopClosureFeatures && (_registrationPipeline->isImageRequired() || guess.isNull())) && fromS.sensorData().imageCompressed().empty()) ||
 	   (_registrationPipeline->isScanRequired() && fromS.sensorData().imageCompressed().empty() && fromS.sensorData().laserScanCompressed().isEmpty()) ||
 	   (_registrationPipeline->isUserDataRequired() && fromS.sensorData().imageCompressed().empty() && fromS.sensorData().userDataCompressed().empty()))
 	{
 		fromS.sensorData() = getNodeData(fromS.id(), true, true, true, true);
 	}
-	if(((_reextractLoopClosureFeatures && _registrationPipeline->isImageRequired()) && toS.sensorData().imageCompressed().empty()) ||
+	if(((_reextractLoopClosureFeatures && (_registrationPipeline->isImageRequired() || guess.isNull())) && toS.sensorData().imageCompressed().empty()) ||
 	   (_registrationPipeline->isScanRequired() && toS.sensorData().imageCompressed().empty() && toS.sensorData().laserScanCompressed().isEmpty()) ||
 	   (_registrationPipeline->isUserDataRequired() && toS.sensorData().imageCompressed().empty() && toS.sensorData().userDataCompressed().empty()))
 	{
@@ -2748,27 +2894,40 @@ Transform Memory::computeTransform(
 	cv::Mat imgBuf, depthBuf, userBuf;
 	LaserScan laserBuf;
 	fromS.sensorData().uncompressData(
-			(_reextractLoopClosureFeatures && _registrationPipeline->isImageRequired())?&imgBuf:0,
-			(_reextractLoopClosureFeatures && _registrationPipeline->isImageRequired())?&depthBuf:0,
+			(_reextractLoopClosureFeatures && (_registrationPipeline->isImageRequired() || guess.isNull()))?&imgBuf:0,
+			(_reextractLoopClosureFeatures && (_registrationPipeline->isImageRequired() || guess.isNull()))?&depthBuf:0,
 			_registrationPipeline->isScanRequired()?&laserBuf:0,
 			_registrationPipeline->isUserDataRequired()?&userBuf:0);
 	toS.sensorData().uncompressData(
-			(_reextractLoopClosureFeatures && _registrationPipeline->isImageRequired())?&imgBuf:0,
-			(_reextractLoopClosureFeatures && _registrationPipeline->isImageRequired())?&depthBuf:0,
+			(_reextractLoopClosureFeatures && (_registrationPipeline->isImageRequired() || guess.isNull()))?&imgBuf:0,
+			(_reextractLoopClosureFeatures && (_registrationPipeline->isImageRequired() || guess.isNull()))?&depthBuf:0,
 			_registrationPipeline->isScanRequired()?&laserBuf:0,
 			_registrationPipeline->isUserDataRequired()?&userBuf:0);
 
 
 	// compute transform fromId -> toId
 	std::vector<int> inliersV;
-	if((_reextractLoopClosureFeatures && _registrationPipeline->isImageRequired()) ||
+	if((_reextractLoopClosureFeatures && (_registrationPipeline->isImageRequired() || guess.isNull())) ||
 		(fromS.getWords().size() && toS.getWords().size()) ||
 		(!guess.isNull() && !_registrationPipeline->isImageRequired()))
 	{
-		Signature tmpFrom = fromS;
-		Signature tmpTo = toS;
+		Signature tmpFrom, tmpTo;
+		if(_invertedReg)
+		{
+			tmpFrom = toS;
+			tmpTo = fromS;
+			if(!guess.isNull())
+			{
+				guess = guess.inverse();
+			}
+		}
+		else
+		{
+			tmpFrom = fromS;
+			tmpTo = toS;
+		}
 
-		if(_reextractLoopClosureFeatures && _registrationPipeline->isImageRequired())
+		if(_reextractLoopClosureFeatures && (_registrationPipeline->isImageRequired() || guess.isNull()))
 		{
 			UDEBUG("");
 			tmpFrom.removeAllWords();
@@ -2789,12 +2948,8 @@ Transform Memory::computeTransform(
 		{
 			UDEBUG("");
 			// no visual in the pipeline, make visual registration for guess
-			// make sure feature matching is used instead of optical flow to compute the guess
-			ParametersMap parameters = parameters_;
-			uInsert(parameters, ParametersPair(Parameters::kVisCorType(), "0"));
-			uInsert(parameters, ParametersPair(Parameters::kRegRepeatOnce(), "false"));
-			RegistrationVis regVis(parameters);
-			guess = regVis.computeTransformation(tmpFrom, tmpTo, guess, info);
+			UASSERT(_registrationVis!=0);
+			guess = _registrationVis->computeTransformation(tmpFrom, tmpTo, guess, info);
 			if(!guess.isNull())
 			{
 				transform = _registrationPipeline->computeTransformationMod(tmpFrom, tmpTo, guess, info);
@@ -2805,6 +2960,7 @@ Transform Memory::computeTransform(
 				_registrationPipeline->isImageRequired() &&
 			   !_registrationPipeline->isScanRequired() &&
 			   !_registrationPipeline->isUserDataRequired() &&
+			   !_invertedReg &&
 			   !tmpTo.getWordsDescriptors().empty() &&
 			   !tmpTo.getWords().empty() &&
 			   !tmpFrom.getWordsDescriptors().empty() &&
@@ -2877,7 +3033,7 @@ Transform Memory::computeTransform(
 				}
 				std::map<int, Transform> bundlePoses;
 				std::multimap<int, Link> bundleLinks;
-				std::map<int, CameraModel> bundleModels;
+				std::map<int, std::vector<CameraModel> > bundleModels;
 				std::map<int, std::map<int, FeatureBA> > wordReferences;
 
 				std::multimap<int, Link> links = fromS.getLinks();
@@ -2903,28 +3059,32 @@ Transform Memory::computeTransform(
 						}
 						if(s)
 						{
-							CameraModel model;
-							if(s->sensorData().cameraModels().size() == 1 && s->sensorData().cameraModels().at(0).isValidForProjection())
+							std::vector<CameraModel> models;
+							if(s->sensorData().cameraModels().size() >= 1 && s->sensorData().cameraModels().at(0).isValidForProjection())
 							{
-								model = s->sensorData().cameraModels()[0];
+								models = s->sensorData().cameraModels();
 							}
-							else if(s->sensorData().stereoCameraModel().isValidForProjection())
+							else if(s->sensorData().stereoCameraModels().size() >= 1 && s->sensorData().stereoCameraModels().at(0).isValidForProjection())
 							{
-								model = s->sensorData().stereoCameraModel().left();
-								// Set Tx for stereo BA
-								model = CameraModel(model.fx(),
-										model.fy(),
-										model.cx(),
-										model.cy(),
-										model.localTransform(),
-										-s->sensorData().stereoCameraModel().baseline()*model.fx());
+								for(size_t i=0; i<s->sensorData().stereoCameraModels().size(); ++i)
+								{
+									CameraModel model = s->sensorData().stereoCameraModels()[i].left();
+									// Set Tx for stereo BA
+									model = CameraModel(model.fx(),
+											model.fy(),
+											model.cx(),
+											model.cy(),
+											model.localTransform(),
+											-s->sensorData().stereoCameraModels()[i].baseline()*model.fx(),
+											model.imageSize());
+									models.push_back(model);
+								}
 							}
 							else
 							{
 								UFATAL("no valid camera model to use local bundle adjustment on loop closure!");
 							}
-							bundleModels.insert(std::make_pair(id, model));
-							Transform invLocalTransform = model.localTransform().inverse();
+							bundleModels.insert(std::make_pair(id, models));
 							UASSERT(iter->second.isValid() || iter->first == fromS.id());
 
 							if(iter->second.transform().isNull())
@@ -2944,16 +3104,27 @@ Transform Memory::computeTransform(
 								if(points3DMap.find(jter->first)!=points3DMap.end() &&
 										(id == tmpTo.id() || jter->first > 0)) // Since we added negative words of "from", only accept matches with current frame
 								{
+									cv::KeyPoint kpts = s->getWordsKpts()[jter->second];
+									int cameraIndex = 0;
+									if(models.size()>1)
+									{
+										UASSERT(models[0].imageWidth()>0);
+										float subImageWidth = models[0].imageWidth();
+										cameraIndex = int(kpts.pt.x / subImageWidth);
+										kpts.pt.x = kpts.pt.x - (subImageWidth*float(cameraIndex));
+									}
+
 									//get depth
 									float d = 0.0f;
 									if( !s->getWords3().empty() &&
 										util3d::isFinite(s->getWords3()[jter->second]))
 									{
 										//move back point in camera frame (to get depth along z)
+										Transform invLocalTransform = models[cameraIndex].localTransform().inverse();
 										d = util3d::transformPoint(s->getWords3()[jter->second], invLocalTransform).z;
 									}
 									wordReferences.insert(std::make_pair(jter->first, std::map<int, FeatureBA>()));
-									wordReferences.at(jter->first).insert(std::make_pair(id, FeatureBA(s->getWordsKpts()[jter->second], d)));
+									wordReferences.at(jter->first).insert(std::make_pair(id, FeatureBA(kpts, d, cv::Mat(), cameraIndex)));
 									++totalWordReferences;
 								}
 							}
@@ -3014,6 +3185,19 @@ Transform Memory::computeTransform(
 		{
 			transform = _registrationPipeline->computeTransformationMod(tmpFrom, tmpTo, guess, info);
 		}
+		if(_invertedReg && !transform.isNull())
+		{
+			transform = transform.inverse();
+		}
+	}
+	else
+	{
+		std::string msg = uFormat("Missing visual features or missing raw data to compute them. Transform cannot be estimated.");
+		if(info)
+		{
+			info->rejectedMsg = msg;
+		}
+		UWARN(msg.c_str());
 	}
 	return transform;
 }
@@ -3237,7 +3421,7 @@ bool Memory::addLink(const Link & link, bool addInDatabase)
 {
 	UASSERT(link.type() > Link::kNeighbor && link.type() != Link::kUndef);
 
-	ULOGGER_INFO("to=%d, from=%d transform: %s var=%f", link.to(), link.from(), link.transform().prettyPrint().c_str(), link.transVariance());
+	ULOGGER_INFO("to=%d, from=%d transform: %s var=%f", link.to(), link.from(), link.transform().prettyPrint().c_str(), link.transVariance(false));
 	Signature * toS = _getSignature(link.to());
 	Signature * fromS = _getSignature(link.from());
 	if(toS && fromS)
@@ -3573,7 +3757,7 @@ unsigned long Memory::getMemoryUsed() const
 	memoryUsage += sizeof(Feature2D) + _feature2D->getParameters().size()*(sizeof(std::string)*2+sizeof(ParametersMap::iterator)) + sizeof(ParametersMap);
 	memoryUsage += sizeof(Registration);
 	memoryUsage += sizeof(RegistrationIcp);
-	memoryUsage += _occupancy->getMemoryUsed();
+	memoryUsage += sizeof(LocalGridMaker);
 	memoryUsage += sizeof(MarkerDetector);
 	memoryUsage += sizeof(DBDriver);
 
@@ -4024,19 +4208,19 @@ void Memory::getNodeWordsAndGlobalDescriptors(int nodeId,
 
 void Memory::getNodeCalibration(int nodeId,
 		std::vector<CameraModel> & models,
-		StereoCameraModel & stereoModel) const
+		std::vector<StereoCameraModel> & stereoModels) const
 {
 	//UDEBUG("nodeId=%d", nodeId);
 	Signature * s = this->_getSignature(nodeId);
 	if(s)
 	{
 		models = s->sensorData().cameraModels();
-		stereoModel = s->sensorData().stereoCameraModel();
+		stereoModels = s->sensorData().stereoCameraModels();
 	}
 	else if(_dbDriver)
 	{
 		// load from database
-		_dbDriver->getCalibration(nodeId, models, stereoModel);
+		_dbDriver->getCalibration(nodeId, models, stereoModels);
 	}
 }
 
@@ -4359,15 +4543,11 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 						CV_16UC1, CV_32FC1, CV_8UC1).c_str());
 
 	if(!data.depthOrRightRaw().empty() &&
-		data.cameraModels().size() == 0 &&
-		!data.stereoCameraModel().isValidForProjection() &&
+		data.cameraModels().empty() &&
+		data.stereoCameraModels().empty() &&
 		!pose.isNull())
 	{
-		UERROR("Camera calibration not valid, calibrate your camera!");
-		if(data.cameraModels().empty())
-			std::cout << data.stereoCameraModel() << std::endl;
-		else
-			std::cout << data.cameraModels()[0] << std::endl;
+		UERROR("No camera calibration found, calibrate your camera!");
 		return 0;
 	}
 	UASSERT(_feature2D != 0);
@@ -4379,7 +4559,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 	float t;
 	std::vector<cv::KeyPoint> keypoints;
 	cv::Mat descriptors;
-	bool isIntermediateNode = data.id() < 0 || (data.imageRaw().empty() && data.keypoints().empty() && data.laserScanRaw().empty());
+	bool isIntermediateNode = data.id() < 0;
 	int id = data.id();
 	if(_generateIds)
 	{
@@ -4418,6 +4598,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 		// we assume that once rtabmap is receiving data, the calibration won't change over time
 		if(data.cameraModels().size())
 		{
+			UDEBUG("Monocular rectification");
 			// Note that only RGB image is rectified, the depth image is assumed to be already registered to rectified RGB camera.
 			UASSERT(int((data.imageRaw().cols/data.cameraModels().size())*data.cameraModels().size()) == data.imageRaw().cols);
 			int subImageWidth = data.imageRaw().cols/data.cameraModels().size();
@@ -4459,25 +4640,58 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 			}
 			data.setRGBDImage(rectifiedImages, data.depthOrRightRaw(), data.cameraModels());
 		}
-		else if(data.stereoCameraModel().isValidForRectification())
+		else if(data.stereoCameraModels().size())
 		{
-			if(!_rectStereoCameraModel.isValidForRectification())
+			UDEBUG("Stereo rectification");
+			UASSERT(int((data.imageRaw().cols/data.stereoCameraModels().size())*data.stereoCameraModels().size()) == data.imageRaw().cols);
+			int subImageWidth = data.imageRaw().cols/data.stereoCameraModels().size();
+			UASSERT(subImageWidth == data.rightRaw().cols/(int)data.stereoCameraModels().size());
+			cv::Mat rectifiedLefts(data.imageRaw().size(), data.imageRaw().type());
+			cv::Mat rectifiedRights(data.rightRaw().size(), data.rightRaw().type());
+			bool initRectMaps = _rectStereoCameraModels.empty();
+			if(initRectMaps)
 			{
-				_rectStereoCameraModel = data.stereoCameraModel();
-				if(!_rectStereoCameraModel.isRectificationMapInitialized())
+				_rectStereoCameraModels.resize(data.stereoCameraModels().size());
+			}
+
+			for(unsigned int i=0; i<data.stereoCameraModels().size(); ++i)
+			{
+				if(data.stereoCameraModels()[i].isValidForRectification())
 				{
-					UWARN("Initializing rectification maps (only done for the first image received)...");
-					_rectStereoCameraModel.initRectificationMap();
-					UWARN("Initializing rectification maps (only done for the first image received)...done!");
+					if(initRectMaps)
+					{
+						_rectStereoCameraModels[i] = data.stereoCameraModels()[i];
+						if(!_rectStereoCameraModels[i].isRectificationMapInitialized())
+						{
+							UWARN("Initializing rectification maps (only done for the first image received)...");
+							_rectStereoCameraModels[i].initRectificationMap();
+							UWARN("Initializing rectification maps (only done for the first image received)...done!");
+						}
+					}
+					UASSERT(_rectStereoCameraModels[i].left().imageWidth() == data.stereoCameraModels()[i].left().imageWidth());
+					UASSERT(_rectStereoCameraModels[i].left().imageHeight() == data.stereoCameraModels()[i].left().imageHeight());
+
+					cv::Mat rectifiedLeft = _rectStereoCameraModels[i].left().rectifyImage(cv::Mat(data.imageRaw(), cv::Rect(subImageWidth*i, 0, subImageWidth, data.imageRaw().rows)));
+					cv::Mat rectifiedRight = _rectStereoCameraModels[i].right().rectifyImage(cv::Mat(data.rightRaw(), cv::Rect(subImageWidth*i, 0, subImageWidth, data.rightRaw().rows)));
+					rectifiedLeft.copyTo(cv::Mat(rectifiedLefts, cv::Rect(subImageWidth*i, 0, subImageWidth, data.imageRaw().rows)));
+					rectifiedRight.copyTo(cv::Mat(rectifiedRights, cv::Rect(subImageWidth*i, 0, subImageWidth, data.rightRaw().rows)));
+					imagesRectified = true;
+				}
+				else
+				{
+					UERROR("Calibration for camera %d cannot be used to rectify the image. Make sure to do a "
+						"full calibration. If images are already rectified, set %s parameter back to true.",
+						(int)i,
+						Parameters::kRtabmapImagesAlreadyRectified().c_str());
+					std::cout << data.stereoCameraModels()[i] << std::endl;
+					return 0;
 				}
 			}
-			UASSERT(_rectStereoCameraModel.left().imageWidth() == data.stereoCameraModel().left().imageWidth());
-			UASSERT(_rectStereoCameraModel.left().imageHeight() == data.stereoCameraModel().left().imageHeight());
+
 			data.setStereoImage(
-					_rectStereoCameraModel.left().rectifyImage(data.imageRaw()),
-					_rectStereoCameraModel.right().rectifyImage(data.rightRaw()),
-					data.stereoCameraModel());
-			imagesRectified = true;
+					rectifiedLefts,
+					rectifiedRights,
+					data.stereoCameraModels());
 		}
 		else
 		{
@@ -4502,6 +4716,97 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 	{
 		UDEBUG("Start dictionary update thread");
 		preUpdateThread.start();
+	}
+
+	if(_rotateImagesUpsideUp && !data.imageRaw().empty() && !data.cameraModels().empty())
+	{
+		// Currently stereo is not supported
+		UASSERT(int((data.imageRaw().cols/data.cameraModels().size())*data.cameraModels().size()) == data.imageRaw().cols);
+		int subInputImageWidth = data.imageRaw().cols/data.cameraModels().size();
+		int subInputDepthWidth = data.depthRaw().cols/data.cameraModels().size();
+		int subOutputImageWidth = 0;
+		int subOutputDepthWidth = 0;
+		cv::Mat rotatedColorImages;
+		cv::Mat rotatedDepthImages;
+		std::vector<CameraModel> rotatedCameraModels;
+		bool allOutputSizesAreOkay = true;
+		bool atLeastOneCameraRotated = false;
+		for(size_t i=0; i<data.cameraModels().size(); ++i)
+		{
+			UDEBUG("Rotating camera %ld", i);
+			cv::Mat rgb = cv::Mat(data.imageRaw(), cv::Rect(subInputImageWidth*i, 0, subInputImageWidth, data.imageRaw().rows));
+			cv::Mat depth = !data.depthRaw().empty()?cv::Mat(data.depthRaw(), cv::Rect(subInputDepthWidth*i, 0, subInputDepthWidth, data.depthRaw().rows)):cv::Mat();
+			CameraModel model = data.cameraModels()[i];
+			atLeastOneCameraRotated |= util2d::rotateImagesUpsideUpIfNecessary(model, rgb, depth);
+			if(rotatedColorImages.empty())
+			{
+				rotatedColorImages = cv::Mat(cv::Size(rgb.cols * data.cameraModels().size(), rgb.rows), rgb.type());
+				subOutputImageWidth = rgb.cols;;
+				if(!depth.empty())
+				{
+					rotatedDepthImages = cv::Mat(cv::Size(depth.cols * data.cameraModels().size(), depth.rows), depth.type());
+					subOutputDepthWidth = depth.cols;
+				}
+			}
+			else if(rgb.cols != subOutputImageWidth || depth.cols != subOutputDepthWidth ||
+					rgb.rows != rotatedColorImages.rows || depth.rows != rotatedDepthImages.rows)
+			{
+				UWARN("Rotated image for camera index %d (rgb=%dx%d depth=%dx%d) doesn't tally "
+				      "with the first camera (rgb=%dx%d, depth=%dx%d). Aborting upside up rotation, "
+					  "will use original image orientation. Set parameter %s to false to avoid "
+					  "this warning.",
+						i,
+						rgb.cols, rgb.rows,
+						depth.cols, depth.rows,
+						subOutputImageWidth, rotatedColorImages.rows,
+						subOutputDepthWidth, rotatedDepthImages.rows,
+						Parameters::kMemRotateImagesUpsideUp().c_str());
+				allOutputSizesAreOkay = false;
+				break;
+			}
+			rgb.copyTo(cv::Mat(rotatedColorImages, cv::Rect(subOutputImageWidth*i, 0, subOutputImageWidth, rgb.rows)));
+			if(!depth.empty())
+			{
+				depth.copyTo(cv::Mat(rotatedDepthImages, cv::Rect(subOutputDepthWidth*i, 0, subOutputDepthWidth, depth.rows)));
+			}
+			rotatedCameraModels.push_back(model);
+		}
+		if(allOutputSizesAreOkay && atLeastOneCameraRotated)
+		{
+			data.setRGBDImage(rotatedColorImages, rotatedDepthImages, rotatedCameraModels);
+
+			// Clear any features to avoid confusion with the rotated cameras.
+			if(!data.keypoints().empty() || !data.keypoints3D().empty() || !data.descriptors().empty())
+			{
+				if(_useOdometryFeatures)
+				{
+					static bool warned = false;
+					if(!warned)
+					{
+						UWARN("Because parameter %s is enabled, parameter %s is inhibited as "
+							"features have to be regenerated. To avoid this warning, set "
+							"explicitly %s to false. This message is only "
+							"printed once.",
+							Parameters::kMemRotateImagesUpsideUp().c_str(),
+							Parameters::kMemUseOdomFeatures().c_str(),
+							Parameters::kMemUseOdomFeatures().c_str());
+						warned = true;
+					}
+				}
+				data.setFeatures(std::vector<cv::KeyPoint>(), std::vector<cv::Point3f>(), cv::Mat());
+			}
+		}
+	}
+	else if(_rotateImagesUpsideUp)
+	{
+		static bool warned = false;
+		if(!warned)
+		{
+			UWARN("Parameter %s can only be used with RGB-only or RGB-D cameras. "
+			      "Ignoring upside up rotation. This message is only printed once.",
+				  Parameters::kMemRotateImagesUpsideUp().c_str());
+			warned = true;
+		}
 	}
 
 	unsigned int preDecimation = 1;
@@ -4550,17 +4855,18 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 							util2d::decimate(decimatedData.depthOrRightRaw(), decimationDepth),
 							cameraModels);
 				}
-				else
+
+				std::vector<StereoCameraModel> stereoCameraModels = decimatedData.stereoCameraModels();
+				for(unsigned int i=0; i<stereoCameraModels.size(); ++i)
 				{
-					StereoCameraModel stereoModel = decimatedData.stereoCameraModel();
-					if(stereoModel.isValidForProjection())
-					{
-						stereoModel.scale(1.0/double(_imagePreDecimation));
-					}
+					stereoCameraModels[i].scale(1.0/double(_imagePreDecimation));
+				}
+				if(!stereoCameraModels.empty())
+				{
 					decimatedData.setStereoImage(
 							util2d::decimate(decimatedData.imageRaw(), _imagePreDecimation),
 							util2d::decimate(decimatedData.depthOrRightRaw(), _imagePreDecimation),
-							stereoModel);
+							stereoCameraModels);
 				}
 			}
 
@@ -4582,7 +4888,26 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 					imageMono.cols % decimatedData.depthRaw().cols == 0 &&
 					imageMono.rows/decimatedData.depthRaw().rows == imageMono.cols/decimatedData.depthRaw().cols)
 				{
-					depthMask = util2d::interpolate(decimatedData.depthRaw(), imageMono.rows/decimatedData.depthRaw().rows, 0.1f);
+					depthMask = decimatedData.depthRaw();
+
+					if(_maskFloorThreshold != 0.0f)
+					{
+						UASSERT(!decimatedData.cameraModels().empty());
+						UDEBUG("Masking floor (threshold=%f)", _maskFloorThreshold);
+						if(_maskFloorThreshold<0.0f)
+						{
+							cv::Mat depthBelow;
+							util3d::filterFloor(depthMask, decimatedData.cameraModels(), _maskFloorThreshold*-1.0f, &depthBelow);
+							depthMask = depthBelow;
+						}
+						else
+						{
+							depthMask = util3d::filterFloor(depthMask, decimatedData.cameraModels(), _maskFloorThreshold);
+						}
+						UDEBUG("Masking floor done.");
+					}
+
+					depthMask = util2d::interpolate(depthMask, imageMono.rows/depthMask.rows, 0.1f);
 				}
 				else
 				{
@@ -4666,6 +4991,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 			{
 				if(!imagesRectified && decimatedData.cameraModels().size())
 				{
+					UASSERT_MSG((int)keypoints.size() == descriptors.rows, uFormat("%d vs %d", (int)keypoints.size(), descriptors.rows).c_str());
 					std::vector<cv::KeyPoint> keypointsValid;
 					keypointsValid.reserve(keypoints.size());
 					cv::Mat descriptorsValid;
@@ -4798,12 +5124,16 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 					keypoints3D = data.keypoints3D();
 				}
 				else if((!decimatedData.depthRaw().empty() && decimatedData.cameraModels().size() && decimatedData.cameraModels()[0].isValidForProjection()) ||
-				   (!decimatedData.rightRaw().empty() && decimatedData.stereoCameraModel().isValidForProjection()))
+				   (!decimatedData.rightRaw().empty() && decimatedData.stereoCameraModels().size() && decimatedData.stereoCameraModels()[0].isValidForProjection()))
 				{
 					keypoints3D = _feature2D->generateKeypoints3D(decimatedData, keypoints);
 					t = timer.ticks();
 					if(stats) stats->addStatistic(Statistics::kTimingMemKeypoints_3D(), t*1000.0f);
 					UDEBUG("time keypoints 3D (%d) = %fs", (int)keypoints3D.size(), t);
+				}
+				if(depthMask.empty() && (_feature2D->getMinDepth() > 0.0f || _feature2D->getMaxDepth() > 0.0f))
+				{
+					_feature2D->filterKeypointsByDepth(keypoints, descriptors, keypoints3D, _feature2D->getMinDepth(), _feature2D->getMaxDepth());
 				}
 			}
 		}
@@ -4836,9 +5166,13 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 		UASSERT(keypoints3D.empty() || keypoints3D.size() == keypoints.size());
 
 		int maxFeatures = _rawDescriptorsKept&&!pose.isNull()&&_feature2D->getMaxFeatures()>0&&_feature2D->getMaxFeatures()<_visMaxFeatures?_visMaxFeatures:_feature2D->getMaxFeatures();
+		bool ssc = _rawDescriptorsKept&&!pose.isNull()&&_feature2D->getMaxFeatures()>0&&_feature2D->getMaxFeatures()<_visMaxFeatures?_visSSC:_feature2D->getSSC();
 		if((int)keypoints.size() > maxFeatures)
 		{
-			_feature2D->limitKeypoints(keypoints, keypoints3D, descriptors, maxFeatures);
+			if(data.cameraModels().size()==1 || data.stereoCameraModels().size()==1)
+				_feature2D->limitKeypoints(keypoints, keypoints3D, descriptors, maxFeatures, data.cameraModels().size()?data.cameraModels()[0].imageSize():data.stereoCameraModels()[0].left().imageSize(), ssc);
+			else
+				_feature2D->limitKeypoints(keypoints, keypoints3D, descriptors, maxFeatures);
 		}
 		t = timer.ticks();
 		if(stats) stats->addStatistic(Statistics::kTimingMemKeypoints_detection(), t*1000.0f);
@@ -4859,13 +5193,151 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 			UASSERT_MSG(imagesRectified, "Cannot extract descriptors on not rectified image from keypoints which assumed to be undistorted");
 			descriptors = _feature2D->generateDescriptors(imageMono, keypoints);
 		}
+		else if(!imagesRectified && !data.cameraModels().empty())
+		{
+			std::vector<cv::KeyPoint> keypointsValid;
+			keypointsValid.reserve(keypoints.size());
+			cv::Mat descriptorsValid;
+			descriptorsValid.reserve(descriptors.rows);
+			std::vector<cv::Point3f> keypoints3DValid;
+			keypoints3DValid.reserve(keypoints3D.size());
+
+			//undistort keypoints before projection (RGB-D)
+			if(data.cameraModels().size() == 1)
+			{
+				std::vector<cv::Point2f> pointsIn, pointsOut;
+				cv::KeyPoint::convert(keypoints,pointsIn);
+				if(data.cameraModels()[0].D_raw().cols == 6)
+				{
+#if CV_MAJOR_VERSION > 2 or (CV_MAJOR_VERSION == 2 and (CV_MINOR_VERSION >4 or (CV_MINOR_VERSION == 4 and CV_SUBMINOR_VERSION >=10)))
+					// Equidistant / FishEye
+					// get only k parameters (k1,k2,p1,p2,k3,k4)
+					cv::Mat D(1, 4, CV_64FC1);
+					D.at<double>(0,0) = data.cameraModels()[0].D_raw().at<double>(0,0);
+					D.at<double>(0,1) = data.cameraModels()[0].D_raw().at<double>(0,1);
+					D.at<double>(0,2) = data.cameraModels()[0].D_raw().at<double>(0,4);
+					D.at<double>(0,3) = data.cameraModels()[0].D_raw().at<double>(0,5);
+					cv::fisheye::undistortPoints(pointsIn, pointsOut,
+							data.cameraModels()[0].K_raw(),
+							D,
+							data.cameraModels()[0].R(),
+							data.cameraModels()[0].P());
+				}
+				else
+#else
+					UWARN("Too old opencv version (%d,%d,%d) to support fisheye model (min 2.4.10 required)!",
+							CV_MAJOR_VERSION, CV_MINOR_VERSION, CV_SUBMINOR_VERSION);
+				}
+#endif
+				{
+					//RadialTangential
+					cv::undistortPoints(pointsIn, pointsOut,
+							data.cameraModels()[0].K_raw(),
+							data.cameraModels()[0].D_raw(),
+							data.cameraModels()[0].R(),
+							data.cameraModels()[0].P());
+				}
+				UASSERT(pointsOut.size() == keypoints.size());
+				for(unsigned int i=0; i<pointsOut.size(); ++i)
+				{
+					if(pointsOut.at(i).x>=0 && pointsOut.at(i).x<data.cameraModels()[0].imageWidth() &&
+					   pointsOut.at(i).y>=0 && pointsOut.at(i).y<data.cameraModels()[0].imageHeight())
+					{
+						keypointsValid.push_back(keypoints.at(i));
+						keypointsValid.back().pt.x = pointsOut.at(i).x;
+						keypointsValid.back().pt.y = pointsOut.at(i).y;
+						descriptorsValid.push_back(descriptors.row(i));
+						if(!keypoints3D.empty())
+						{
+							keypoints3DValid.push_back(keypoints3D.at(i));
+						}
+					}
+				}
+			}
+			else
+			{
+				float subImageWidth;
+				if(!data.imageRaw().empty())
+				{
+					UASSERT(int((data.imageRaw().cols/data.cameraModels().size())*data.cameraModels().size()) == data.imageRaw().cols);
+					subImageWidth = data.imageRaw().cols/data.cameraModels().size();
+				}
+				else
+				{
+					UASSERT(data.cameraModels()[0].imageWidth()>0);
+					subImageWidth = data.cameraModels()[0].imageWidth();
+				}
+
+				for(unsigned int i=0; i<keypoints.size(); ++i)
+				{
+					int cameraIndex = int(keypoints.at(i).pt.x / subImageWidth);
+					UASSERT_MSG(cameraIndex >= 0 && cameraIndex < (int)data.cameraModels().size(),
+							uFormat("cameraIndex=%d, models=%d, kpt.x=%f, subImageWidth=%f (Camera model image width=%d)",
+									cameraIndex, (int)data.cameraModels().size(), keypoints[i].pt.x, subImageWidth, data.cameraModels()[0].imageWidth()).c_str());
+
+					std::vector<cv::Point2f> pointsIn, pointsOut;
+					pointsIn.push_back(cv::Point2f(keypoints.at(i).pt.x-subImageWidth*cameraIndex, keypoints.at(i).pt.y));
+					if(data.cameraModels()[cameraIndex].D_raw().cols == 6)
+					{
+#if CV_MAJOR_VERSION > 2 or (CV_MAJOR_VERSION == 2 and (CV_MINOR_VERSION >4 or (CV_MINOR_VERSION == 4 and CV_SUBMINOR_VERSION >=10)))
+						// Equidistant / FishEye
+						// get only k parameters (k1,k2,p1,p2,k3,k4)
+						cv::Mat D(1, 4, CV_64FC1);
+						D.at<double>(0,0) = data.cameraModels()[cameraIndex].D_raw().at<double>(0,0);
+						D.at<double>(0,1) = data.cameraModels()[cameraIndex].D_raw().at<double>(0,1);
+						D.at<double>(0,2) = data.cameraModels()[cameraIndex].D_raw().at<double>(0,4);
+						D.at<double>(0,3) = data.cameraModels()[cameraIndex].D_raw().at<double>(0,5);
+						cv::fisheye::undistortPoints(pointsIn, pointsOut,
+								data.cameraModels()[cameraIndex].K_raw(),
+								D,
+								data.cameraModels()[cameraIndex].R(),
+								data.cameraModels()[cameraIndex].P());
+					}
+					else
+#else
+						UWARN("Too old opencv version (%d,%d,%d) to support fisheye model (min 2.4.10 required)!",
+								CV_MAJOR_VERSION, CV_MINOR_VERSION, CV_SUBMINOR_VERSION);
+					}
+#endif
+					{
+						//RadialTangential
+						cv::undistortPoints(pointsIn, pointsOut,
+								data.cameraModels()[cameraIndex].K_raw(),
+								data.cameraModels()[cameraIndex].D_raw(),
+								data.cameraModels()[cameraIndex].R(),
+								data.cameraModels()[cameraIndex].P());
+					}
+
+					if(pointsOut[0].x>=0 && pointsOut[0].x<data.cameraModels()[cameraIndex].imageWidth() &&
+					   pointsOut[0].y>=0 && pointsOut[0].y<data.cameraModels()[cameraIndex].imageHeight())
+					{
+						keypointsValid.push_back(keypoints.at(i));
+						keypointsValid.back().pt.x = pointsOut[0].x + subImageWidth*cameraIndex;
+						keypointsValid.back().pt.y = pointsOut[0].y;
+						descriptorsValid.push_back(descriptors.row(i));
+						if(!keypoints3D.empty())
+						{
+							keypoints3DValid.push_back(keypoints3D.at(i));
+						}
+					}
+				}
+			}
+
+			keypoints = keypointsValid;
+			descriptors = descriptorsValid;
+			keypoints3D = keypoints3DValid;
+
+			t = timer.ticks();
+			if(stats) stats->addStatistic(Statistics::kTimingMemRectification(), t*1000.0f);
+			UDEBUG("time rectification = %fs", t);
+		}
 		t = timer.ticks();
 		if(stats) stats->addStatistic(Statistics::kTimingMemDescriptors_extraction(), t*1000.0f);
 		UDEBUG("time descriptors (%d) = %fs", descriptors.rows, t);
 
 		if(keypoints3D.empty() &&
 			((!data.depthRaw().empty() && data.cameraModels().size() && data.cameraModels()[0].isValidForProjection()) ||
-		   (!data.rightRaw().empty() && data.stereoCameraModel().isValidForProjection())))
+		   (!data.rightRaw().empty() && data.stereoCameraModels().size() && data.stereoCameraModels()[0].isValidForProjection())))
 		{
 			keypoints3D = _feature2D->generateKeypoints3D(data, keypoints);
 		}
@@ -4914,21 +5386,41 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 		{
 			UASSERT((int)keypoints.size() == descriptors.rows);
 			int inliersCount = 0;
-			if(_feature2D->getGridRows() > 1 || _feature2D->getGridCols() > 1)
+			if((_feature2D->getGridRows() > 1 || _feature2D->getGridCols() > 1) &&
+				(decimatedData.cameraModels().size()==1 || decimatedData.stereoCameraModels().size()==1 ||
+					data.cameraModels().size()==1 || data.stereoCameraModels().size()==1))
 			{
-				Feature2D::limitKeypoints(keypoints, inliers, _feature2D->getMaxFeatures(), decimatedData.imageRaw().size(), _feature2D->getGridRows(), _feature2D->getGridCols());
-				for(size_t i=0; i<inliers.size(); ++i)
-				{
-					if(inliers[i])
-					{
-						++inliersCount;
-					}
-				}
+				Feature2D::limitKeypoints(keypoints, inliers, _feature2D->getMaxFeatures(),
+					decimatedData.cameraModels().size()?decimatedData.cameraModels()[0].imageSize():
+					decimatedData.stereoCameraModels().size()?decimatedData.stereoCameraModels()[0].left().imageSize():
+					data.cameraModels().size()?data.cameraModels()[0].imageSize():data.stereoCameraModels()[0].left().imageSize(),
+					_feature2D->getGridRows(), _feature2D->getGridCols(), _feature2D->getSSC());
 			}
 			else
 			{
-				Feature2D::limitKeypoints(keypoints, inliers, _feature2D->getMaxFeatures());
-				inliersCount = _feature2D->getMaxFeatures();
+				if(_feature2D->getGridRows() > 1 || _feature2D->getGridCols() > 1)
+				{
+					UWARN("Ignored %s and %s parameters as they cannot be used for multi-cameras setup or uncalibrated camera.",
+							Parameters::kKpGridCols().c_str(), Parameters::kKpGridRows().c_str());
+				}
+				if(decimatedData.cameraModels().size()==1 || decimatedData.stereoCameraModels().size()==1 ||
+					data.cameraModels().size()==1 || data.stereoCameraModels().size()==1)
+				{
+					Feature2D::limitKeypoints(keypoints, inliers, _feature2D->getMaxFeatures(),
+						decimatedData.cameraModels().size()?decimatedData.cameraModels()[0].imageSize():
+						decimatedData.stereoCameraModels().size()?decimatedData.stereoCameraModels()[0].left().imageSize():
+						data.cameraModels().size()?data.cameraModels()[0].imageSize():data.stereoCameraModels()[0].left().imageSize(),
+						_feature2D->getSSC());
+				}
+				else
+				{
+					Feature2D::limitKeypoints(keypoints, inliers, _feature2D->getMaxFeatures());
+				}
+			}
+			for(size_t i=0; i<inliers.size(); ++i)
+			{
+				if(inliers[i])
+					++inliersCount;
 			}
 
 			descriptorsForQuantization = cv::Mat(inliersCount, descriptors.cols, descriptors.type());
@@ -5033,45 +5525,47 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 	}
 
 	Landmarks landmarks = data.landmarks();
-	if(_detectMarkers && !isIntermediateNode && !data.imageRaw().empty())
+	if(!landmarks.empty() && isIntermediateNode)
+	{
+		UDEBUG("Landmarks provided (size=%ld) are ignored because this signature is set as intermediate.", landmarks.size());
+		landmarks.clear();
+	}
+	else if(_detectMarkers && !isIntermediateNode && !data.imageRaw().empty())
 	{
 		UDEBUG("Detecting markers...");
 		if(landmarks.empty())
 		{
-			std::map<int, MarkerInfo> markers;
-			if(!data.cameraModels().empty() && data.cameraModels()[0].isValidForProjection())
+			std::vector<CameraModel> models = data.cameraModels();
+			if(models.empty())
 			{
-				if(data.cameraModels().size() > 1)
+				for(size_t i=0; i<data.stereoCameraModels().size(); ++i)
 				{
-					static bool warned = false;
-					if(!warned)
+					models.push_back(data.stereoCameraModels()[i].left());
+				}
+			}
+
+			if(!models.empty() && models[0].isValidForProjection())
+			{
+				std::map<int, MarkerInfo> markers = _markerDetector->detect(data.imageRaw(), models, data.depthRaw(), _landmarksSize);
+
+				for(std::map<int, MarkerInfo>::iterator iter=markers.begin(); iter!=markers.end(); ++iter)
+				{
+					if(iter->first <= 0)
 					{
-						UWARN("Detecting markers in multi-camera setup is not yet implemented, aborting marker detection. This message is only printed once.");
+						UERROR("Invalid marker received! IDs should be > 0 (it is %d). Ignoring this marker.", iter->first);
+						continue;
 					}
-					warned = true;
+					cv::Mat covariance = cv::Mat::eye(6,6,CV_64FC1);
+					covariance(cv::Range(0,3), cv::Range(0,3)) *= _markerLinVariance;
+					covariance(cv::Range(3,6), cv::Range(3,6)) *= _markerAngVariance;
+					landmarks.insert(std::make_pair(iter->first, Landmark(iter->first, iter->second.length(), iter->second.pose(), covariance)));
 				}
-				else
-				{
-					markers = _markerDetector->detect(data.imageRaw(), data.cameraModels()[0], data.depthRaw(), _landmarksSize);
-				}
+				UDEBUG("Markers detected = %d", (int)markers.size());
 			}
-			else if(data.stereoCameraModel().isValidForProjection())
+			else
 			{
-				markers = _markerDetector->detect(data.imageRaw(), data.stereoCameraModel().left(), cv::Mat(), _landmarksSize);
+				UWARN("No valid camera calibration for marker detection");
 			}
-			for(std::map<int, MarkerInfo>::iterator iter=markers.begin(); iter!=markers.end(); ++iter)
-			{
-				if(iter->first <= 0)
-				{
-					UERROR("Invalid marker received! IDs should be > 0 (it is %d). Ignoring this marker.", iter->first);
-					continue;
-				}
-				cv::Mat covariance = cv::Mat::eye(6,6,CV_64FC1);
-				covariance(cv::Range(0,3), cv::Range(0,3)) *= _markerLinVariance;
-				covariance(cv::Range(3,6), cv::Range(3,6)) *= _markerAngVariance;
-				landmarks.insert(std::make_pair(iter->first, Landmark(iter->first, iter->second.length(), iter->second.pose(), covariance)));
-			}
-			UDEBUG("Markers detected = %d", (int)markers.size());
 		}
 		else
 		{
@@ -5085,7 +5579,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 	cv::Mat image = data.imageRaw();
 	cv::Mat depthOrRightImage = data.depthOrRightRaw();
 	std::vector<CameraModel> cameraModels = data.cameraModels();
-	StereoCameraModel stereoCameraModel = data.stereoCameraModel();
+	std::vector<StereoCameraModel> stereoCameraModels = data.stereoCameraModels();
 
 	// apply decimation?
 	if(_imagePostDecimation > 1 && !isIntermediateNode)
@@ -5095,7 +5589,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 			image = decimatedData.imageRaw();
 			depthOrRightImage = decimatedData.depthOrRightRaw();
 			cameraModels = decimatedData.cameraModels();
-			stereoCameraModel = decimatedData.stereoCameraModel();
+			stereoCameraModels = decimatedData.stereoCameraModels();
 		}
 		else
 		{
@@ -5123,9 +5617,9 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 			{
 				cameraModels[i] = cameraModels[i].scaled(1.0/double(_imagePostDecimation));
 			}
-			if(stereoCameraModel.isValidForProjection())
+			for(unsigned int i=0; i<stereoCameraModels.size(); ++i)
 			{
-				stereoCameraModel.scale(1.0/double(_imagePostDecimation));
+				stereoCameraModels[i].scale(1.0/double(_imagePostDecimation));
 			}
 		}
 
@@ -5297,7 +5791,8 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 				0,
 				_laserScanVoxelSize,
 				_laserScanNormalK,
-				_laserScanNormalRadius);
+				_laserScanNormalRadius,
+				_laserScanGroundNormalsUp);
 		t = timer.ticks();
 		if(stats) stats->addStatistic(Statistics::kTimingMemScan_filtering(), t*1000.0f);
 		UDEBUG("time normals scan = %fs", t);
@@ -5315,10 +5810,42 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 		std::vector<unsigned char> imageBytes;
 		std::vector<unsigned char> depthBytes;
 
-		if(_saveDepth16Format && !depthOrRightImage.empty() && depthOrRightImage.type() == CV_32FC1)
+		if(!depthOrRightImage.empty() && depthOrRightImage.type() == CV_32FC1)
 		{
-			UWARN("Save depth data to 16 bits format: depth type detected is 32FC1, use 16UC1 depth format to avoid this conversion (or set parameter \"Mem/SaveDepth16Format\"=false to use 32bits format).");
-			depthOrRightImage = util2d::cvtDepthFromFloat(depthOrRightImage);
+			if(_saveDepth16Format)
+			{
+				static bool warned = false;
+				if(!warned)
+				{
+					UWARN("Converting depth data to 16 bits format because depth type detected is 32FC1, "
+					      "feed 16UC1 depth format directly to avoid this conversion (or set parameter %s=false "
+						  "to save 32bits format). This warning is only printed once.",
+						Parameters::kMemSaveDepth16Format().c_str());
+					warned = true;
+				}
+				depthOrRightImage = util2d::cvtDepthFromFloat(depthOrRightImage);
+			}
+			else if(_depthCompressionFormat == ".rvl")
+			{
+				static bool warned = false;
+				if(!warned)
+				{
+					UWARN("%s is set to false to use 32bits format but this is not "
+					 	  "compatible with the compressed depth format chosen (%s=\"%s\"), depth "
+						  "images will be compressed in \".png\" format instead. Explicitly "
+						  "set %s to true to keep using \"%s\" format and images will be "
+						  "converted to 16bits for convenience (warning: that would "
+						  "remove all depth values over 65 meters). Explicitly set %s=\".png\" "
+						  "to suppress this warning. This warning is only printed once.",
+						Parameters::kMemSaveDepth16Format().c_str(),
+						Parameters::kMemDepthCompressionFormat().c_str(),
+						_depthCompressionFormat.c_str(),
+						Parameters::kMemSaveDepth16Format().c_str(),
+						_depthCompressionFormat.c_str(),
+						Parameters::kMemDepthCompressionFormat().c_str());
+					warned = true;
+				}
+			}
 		}
 
 		cv::Mat compressedImage;
@@ -5328,7 +5855,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 		if(_compressionParallelized)
 		{
 			rtabmap::CompressionThread ctImage(image, _rgbCompressionFormat);
-			rtabmap::CompressionThread ctDepth(depthOrRightImage, depthOrRightImage.type() == CV_32FC1 || depthOrRightImage.type() == CV_16UC1?std::string(".png"):_rgbCompressionFormat);
+			rtabmap::CompressionThread ctDepth(depthOrRightImage, depthOrRightImage.type() == CV_32FC1 || depthOrRightImage.type() == CV_16UC1?_depthCompressionFormat:_rgbCompressionFormat);
 			rtabmap::CompressionThread ctLaserScan(laserScan.data());
 			rtabmap::CompressionThread ctUserData(data.userDataRaw());
 			if(!image.empty())
@@ -5360,7 +5887,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 		else
 		{
 			compressedImage = compressImage2(image, _rgbCompressionFormat);
-			compressedDepth = compressImage2(depthOrRightImage, depthOrRightImage.type() == CV_32FC1 || depthOrRightImage.type() == CV_16UC1?std::string(".png"):_rgbCompressionFormat);
+			compressedDepth = compressImage2(depthOrRightImage, depthOrRightImage.type() == CV_32FC1 || depthOrRightImage.type() == CV_16UC1?_depthCompressionFormat:_rgbCompressionFormat);
 			compressedScan = compressData2(laserScan.data());
 			compressedUserData = compressData2(data.userDataRaw());
 		}
@@ -5372,7 +5899,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 			"",
 			pose,
 			data.groundTruth(),
-			stereoCameraModel.isValidForProjection()?
+			!stereoCameraModels.empty()?
 				SensorData(
 						laserScan.angleIncrement() == 0.0f?
 							LaserScan(compressedScan,
@@ -5390,7 +5917,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 								laserScan.localTransform()),
 						compressedImage,
 						compressedDepth,
-						stereoCameraModel,
+						stereoCameraModels,
 						id,
 						0,
 						compressedUserData):
@@ -5456,7 +5983,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 			"",
 			pose,
 			data.groundTruth(),
-			stereoCameraModel.isValidForProjection()?
+			!stereoCameraModels.empty()?
 				SensorData(
 						laserScan.angleIncrement() == 0.0f?
 								LaserScan(compressedScan,
@@ -5474,7 +6001,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 									laserScan.localTransform()),
 						cv::Mat(),
 						cv::Mat(),
-						stereoCameraModel,
+						stereoCameraModels,
 						id,
 						0,
 						compressedUserData):
@@ -5512,7 +6039,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 	}
 	else
 	{
-		s->sensorData().setStereoImage(image, depthOrRightImage, stereoCameraModel, false);
+		s->sensorData().setStereoImage(image, depthOrRightImage, stereoCameraModels, false);
 	}
 	s->sensorData().setLaserScan(laserScan, false);
 	s->sensorData().setUserData(data.userDataRaw(), false);
@@ -5524,7 +6051,24 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 	s->sensorData().setGroundTruth(data.groundTruth());
 	s->sensorData().setGPS(data.gps());
 	s->sensorData().setEnvSensors(data.envSensors());
-	s->sensorData().setGlobalDescriptors(data.globalDescriptors());
+
+	if(!isIntermediateNode)
+	{
+		std::vector<GlobalDescriptor> globalDescriptors = data.globalDescriptors();
+		if(_globalDescriptorExtractor)
+		{
+			GlobalDescriptor gdescriptor = _globalDescriptorExtractor->extract(inputData);
+			if(!gdescriptor.data().empty())
+			{
+				globalDescriptors.push_back(gdescriptor);
+			}
+		}
+		s->sensorData().setGlobalDescriptors(globalDescriptors);
+	}
+	else if(!data.globalDescriptors().empty())
+	{
+		UDEBUG("Global descriptors provided (size=%ld) are ignored because this signature is set as intermediate.", data.globalDescriptors().size());
+	}
 
 	t = timer.ticks();
 	if(stats) stats->addStatistic(Statistics::kTimingMemCompressing_data(), t*1000.0f);
@@ -5537,14 +6081,14 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 	// Occupancy grid map stuff
 	if(_createOccupancyGrid && !isIntermediateNode)
 	{
-		if( (_occupancy->isGridFromDepth() && !data.depthOrRightRaw().empty()) ||
-			(!_occupancy->isGridFromDepth() && !data.laserScanRaw().empty()))
+		if( (_localMapMaker->isGridFromDepth() && !data.depthOrRightRaw().empty()) ||
+			(!_localMapMaker->isGridFromDepth() && !data.laserScanRaw().empty()))
 		{
 			cv::Mat ground, obstacles, empty;
 			float cellSize = 0.0f;
 			cv::Point3f viewPoint(0,0,0);
-			_occupancy->createLocalMap(*s, ground, obstacles, empty, viewPoint);
-			cellSize = _occupancy->getCellSize();
+			_localMapMaker->createLocalMap(*s, ground, obstacles, empty, viewPoint);
+			cellSize = _localMapMaker->getCellSize();
 			s->sensorData().setOccupancyGrid(ground, obstacles, empty, cellSize, viewPoint);
 
 			t = timer.ticks();
@@ -5588,7 +6132,7 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
 				UINFO("Added GPS origin: long=%f lat=%f alt=%f bearing=%f error=%f", data.gps().longitude(), data.gps().latitude(), data.gps().altitude(), data.gps().bearing(), data.gps().error());
 			}
 			cv::Point3f pt = data.gps().toGeodeticCoords().toENU_WGS84(_gpsOrigin.toGeodeticCoords());
-			Transform gpsPose(pt.x, pt.y, pose.z(), 0, 0, -(data.gps().bearing()-90.0)*180.0/M_PI);
+			Transform gpsPose(pt.x, pt.y, pose.z(), 0, 0, -(data.gps().bearing()-90.0)*M_PI/180.0);
 			cv::Mat gpsInfMatrix = cv::Mat::eye(6,6,CV_64FC1)/9999.0; // variance not used >= 9999
 
 			UDEBUG("Added GPS prior: x=%f y=%f z=%f yaw=%f", gpsPose.x(), gpsPose.y(), gpsPose.z(), gpsPose.theta());
@@ -5648,7 +6192,24 @@ Signature * Memory::createSignature(const SensorData & inputData, const Transfor
                 }
                 
             }
-			Link landmark(s->id(), landmarkId, Link::kLandmark, iter->second.pose(), iter->second.covariance().inv(), landmarkSize);
+
+			Transform landmarkPose = iter->second.pose();
+			if(_registrationPipeline->force3DoF())
+			{
+				// For 2D slam, make sure the landmark z axis is up
+				rtabmap::Transform tx = landmarkPose.rotation() * rtabmap::Transform(1,0,0,0,0,0);
+				rtabmap::Transform ty = landmarkPose.rotation() * rtabmap::Transform(0,1,0,0,0,0);
+				if(fabs(tx.z()) > 0.9)
+				{
+					landmarkPose*=rtabmap::Transform(0,0,0,0,(tx.z()>0?1:-1)*M_PI/2,0);
+				}
+				else if(fabs(ty.z()) > 0.9)
+				{
+					landmarkPose*=rtabmap::Transform(0,0,0,(ty.z()>0?-1:1)*M_PI/2,0,0);
+				}
+			}
+
+			Link landmark(s->id(), landmarkId, Link::kLandmark, landmarkPose, iter->second.covariance().inv(), landmarkSize);
 			s->addLandmark(landmark);
 
 			// Update landmark index

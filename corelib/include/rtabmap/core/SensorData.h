@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef SENSORDATA_H_
 #define SENSORDATA_H_
 
-#include <rtabmap/core/RtabmapExp.h>
+#include <rtabmap/core/rtabmap_core_export.h>
 #include <rtabmap/core/Transform.h>
 #include <rtabmap/core/CameraModel.h>
 #include <rtabmap/core/StereoCameraModel.h>
@@ -48,7 +48,7 @@ namespace rtabmap
 /**
  * An id is automatically generated if id=0.
  */
-class RTABMAP_EXP SensorData
+class RTABMAP_CORE_EXPORT SensorData
 {
 public:
 	// empty constructor
@@ -126,6 +126,25 @@ public:
 			double stamp = 0.0,
 			const cv::Mat & userData = cv::Mat());
 
+	// Multi-cameras stereo constructor
+	SensorData(
+			const cv::Mat & rgb,
+			const cv::Mat & depth,
+			const std::vector<StereoCameraModel> & cameraModels,
+			int id = 0,
+			double stamp = 0.0,
+			const cv::Mat & userData = cv::Mat());
+
+	// Multi-cameras stereo constructor + laser scan
+	SensorData(
+			const LaserScan & laserScan,
+			const cv::Mat & rgb,
+			const cv::Mat & depth,
+			const std::vector<StereoCameraModel> & cameraModels,
+			int id = 0,
+			double stamp = 0.0,
+			const cv::Mat & userData = cv::Mat());
+
 	// IMU constructor
 	SensorData(
 			const IMU & imu,
@@ -143,8 +162,8 @@ public:
 			_depthOrRightCompressed.empty() &&
 			_laserScanRaw.isEmpty() &&
 			_laserScanCompressed.isEmpty() &&
-			_cameraModels.size() == 0 &&
-			!_stereoCameraModel.isValidForProjection() &&
+			_cameraModels.empty() &&
+			_stereoCameraModels.empty() &&
 			_userDataRaw.empty() &&
 			_userDataCompressed.empty() &&
 			_keypoints.size() == 0 &&
@@ -173,6 +192,7 @@ public:
 	void setRGBDImage(const cv::Mat & rgb, const cv::Mat & depth, const CameraModel & model, bool clearPreviousData = true);
 	void setRGBDImage(const cv::Mat & rgb, const cv::Mat & depth, const std::vector<CameraModel> & models, bool clearPreviousData = true);
 	void setStereoImage(const cv::Mat & left, const cv::Mat & right, const StereoCameraModel & stereoCameraModel, bool clearPreviousData = true);
+	void setStereoImage(const cv::Mat & left, const cv::Mat & right, const std::vector<StereoCameraModel> & stereoCameraModels, bool clearPreviousData = true);
 
 	/**
 	 * Set laser scan data. Detect automatically if raw or compressed.
@@ -183,16 +203,21 @@ public:
 
 	void setCameraModel(const CameraModel & model) {_cameraModels.clear(); _cameraModels.push_back(model);}
 	void setCameraModels(const std::vector<CameraModel> & models) {_cameraModels = models;}
-	void setStereoCameraModel(const StereoCameraModel & stereoCameraModel) {_stereoCameraModel = stereoCameraModel;}
+	void setStereoCameraModel(const StereoCameraModel & stereoCameraModel) {_stereoCameraModels.clear(); _stereoCameraModels.push_back(stereoCameraModel);}
+	void setStereoCameraModels(const std::vector<StereoCameraModel> & stereoCameraModels) {_stereoCameraModels = stereoCameraModels;}
 
 	//for convenience
 	cv::Mat depthRaw() const {return _depthOrRightRaw.type()!=CV_8UC1?_depthOrRightRaw:cv::Mat();}
 	cv::Mat rightRaw() const {return _depthOrRightRaw.type()==CV_8UC1?_depthOrRightRaw:cv::Mat();}
 
-	RTABMAP_DEPRECATED(void setImageRaw(const cv::Mat & image), "Use setRGBDImage() or setStereoImage() with clearNotUpdated=false or removeRawData() instead. To be backward compatible, this function doesn't clear compressed data.");
-	RTABMAP_DEPRECATED(void setDepthOrRightRaw(const cv::Mat & image), "Use setRGBDImage() or setStereoImage() with clearNotUpdated=false or removeRawData() instead. To be backward compatible, this function doesn't clear compressed data.");
-	RTABMAP_DEPRECATED(void setLaserScanRaw(const LaserScan & scan), "Use setLaserScan() with clearNotUpdated=false or removeRawData() instead. To be backward compatible, this function doesn't clear compressed data.");
-	RTABMAP_DEPRECATED(void setUserDataRaw(const cv::Mat & data), "Use setUserData() or removeRawData() instead.");
+	// Use setRGBDImage() or setStereoImage() with clearNotUpdated=false or removeRawData() instead. To be backward compatible, this function doesn't clear compressed data.
+	RTABMAP_DEPRECATED void setImageRaw(const cv::Mat & image);
+	// Use setRGBDImage() or setStereoImage() with clearNotUpdated=false or removeRawData() instead. To be backward compatible, this function doesn't clear compressed data.
+	RTABMAP_DEPRECATED void setDepthOrRightRaw(const cv::Mat & image);
+	// Use setLaserScan() with clearNotUpdated=false or removeRawData() instead. To be backward compatible, this function doesn't clear compressed data.
+	RTABMAP_DEPRECATED void setLaserScanRaw(const LaserScan & scan);
+	// Use setUserData() or removeRawData() instead.
+	RTABMAP_DEPRECATED void setUserDataRaw(const cv::Mat & data);
 
 	void uncompressData();
 	void uncompressData(
@@ -213,7 +238,7 @@ public:
 			cv::Mat * emptyCellsRaw = 0) const;
 
 	const std::vector<CameraModel> & cameraModels() const {return _cameraModels;}
-	const StereoCameraModel & stereoCameraModel() const {return _stereoCameraModel;}
+	const std::vector<StereoCameraModel> & stereoCameraModels() const {return _stereoCameraModels;}
 
 	/**
 	 * Set user data. Detect automatically if raw or compressed. If raw, the data is
@@ -289,6 +314,13 @@ public:
 
 	bool isPointVisibleFromCameras(const cv::Point3f & pt) const; // assuming point is in robot frame
 
+#ifdef HAVE_OPENCV_CUDEV
+	const cv::cuda::GpuMat & imageRawGpu() const {return _imageRawGpu;}
+	void setImageRawGpu(const cv::cuda::GpuMat & image) {_imageRawGpu = image;}
+	const cv::cuda::GpuMat & depthOrRightRawGpu() const {return _depthOrRightRawGpu;}
+	void setDepthOrRightRawGpu(const cv::cuda::GpuMat & image) {_depthOrRightRawGpu = image;}
+#endif
+
 private:
 	int _id;
 	double _stamp;
@@ -302,7 +334,7 @@ private:
 	LaserScan _laserScanRaw;
 
 	std::vector<CameraModel> _cameraModels;
-	StereoCameraModel _stereoCameraModel;
+	std::vector<StereoCameraModel> _stereoCameraModels;
 
 	// user data
 	cv::Mat _userDataCompressed;      // compressed data
@@ -340,6 +372,14 @@ private:
 	GPS gps_;
 
 	IMU imu_;
+
+#ifdef HAVE_OPENCV_CUDEV
+	// Temporary buffers used for some optimizations,
+	// particulary to avoid host<->device copies if same 
+	// data are re-used
+	cv::cuda::GpuMat _imageRawGpu;
+	cv::cuda::GpuMat _depthOrRightRawGpu;
+#endif
 };
 
 }

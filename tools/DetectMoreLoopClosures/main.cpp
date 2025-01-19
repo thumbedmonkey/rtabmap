@@ -27,6 +27,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <rtabmap/core/DBDriver.h>
 #include <rtabmap/core/Rtabmap.h>
+#include <rtabmap/core/Memory.h>
+#include <rtabmap/core/global_map/OccupancyGrid.h>
 #include <rtabmap/core/util3d.h>
 #include <rtabmap/core/util3d_filtering.h>
 #include <rtabmap/core/util3d_transforms.h>
@@ -211,11 +213,19 @@ int main(int argc, char * argv[])
 	}
 	delete driver;
 
+	for(ParametersMap::iterator iter=inputParams.begin(); iter!=inputParams.end(); ++iter)
+	{
+		printf(" Using parameter \"%s=%s\" from arguments\n", iter->first.c_str(), iter->second.c_str());
+	}
+
 	// Get the global optimized map
 	Rtabmap rtabmap;
 	printf("Initialization...\n");
 	uInsert(parameters, inputParams);
 	rtabmap.init(parameters, dbPath);
+
+	float xMin, yMin, cellSize;
+	bool haveOptimizedMap = !rtabmap.getMemory()->load2DMap(xMin, yMin, cellSize).empty();
 
 	PrintProgressState progress;
 	printf("Detecting...\n");
@@ -229,6 +239,30 @@ int main(int argc, char * argv[])
 		else
 		{
 			printf("Loop closure detection failed!\n");
+		}
+	}
+	else if(detected > 0 && haveOptimizedMap)
+	{
+		printf("The database has a global occupancy grid, regenerating one with new optimized graph!\n");
+		LocalGridCache cache;
+		OccupancyGrid grid(&cache, parameters);
+		std::map<int, Transform> optimizedPoses = rtabmap.getLocalOptimizedPoses();
+		for(std::map<int, Transform>::iterator iter=optimizedPoses.lower_bound(0); iter!=optimizedPoses.end(); ++iter)
+		{
+			SensorData data = rtabmap.getMemory()->getNodeData(iter->first, false, false, false, true);
+			data.uncompressData();
+			cache.add(iter->first, data.gridGroundCellsRaw(), data.gridObstacleCellsRaw(), data.gridEmptyCellsRaw(), data.gridCellSize(), data.gridViewPoint());
+		}
+		grid.update(optimizedPoses);
+		cv::Mat map = grid.getMap(xMin, yMin);
+		if(map.empty())
+		{
+			printf("Could not generate the global occupancy grid!\n");
+		}
+		else
+		{
+			rtabmap.getMemory()->save2DMap(map, xMin, yMin, cellSize);
+			printf("Save new global occupancy grid!\n");
 		}
 	}
 

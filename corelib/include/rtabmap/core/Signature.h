@@ -27,7 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
+#include "rtabmap/core/rtabmap_core_export.h" // DLL export/import defines
 
 #include <pcl/point_types.h>
 #include <opencv2/core/core.hpp>
@@ -45,7 +45,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace rtabmap
 {
 
-class RTABMAP_EXP Signature
+class RTABMAP_CORE_EXPORT Signature
 {
 
 public:
@@ -90,9 +90,10 @@ public:
 	void removeLink(int idTo);
 	void removeVirtualLinks();
 
-	void addLandmark(const Link & landmark) {_landmarks.insert(std::make_pair(landmark.to(), landmark));}
+	void addLandmark(const Link & landmark);
 	const std::map<int, Link> & getLandmarks() const {return _landmarks;}
-	void removeLandmarks() {_landmarks.clear();}
+	void removeLandmarks();
+	void removeLandmark(int landmarkId);
 
 	void setSaved(bool saved) {_saved = saved;}
 	void setModified(bool modified) {_modified = modified; _linksModified = modified;}

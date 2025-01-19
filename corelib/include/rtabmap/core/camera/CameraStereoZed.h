@@ -27,8 +27,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
 #include "rtabmap/core/StereoCameraModel.h"
 #include "rtabmap/core/camera/CameraVideo.h"
 #include "rtabmap/core/Version.h"
@@ -42,16 +40,16 @@ namespace rtabmap
 {
 class ZedIMUThread;
 
-class RTABMAP_EXP CameraStereoZed :
+class RTABMAP_CORE_EXPORT CameraStereoZed :
 	public Camera
 {
 public:
 	static bool available();
-
+	static int sdkVersion();
 public:
 	CameraStereoZed(
 			int deviceId,
-			int resolution = 2, // 0=HD2K, 1=HD1080, 2=HD720, 3=VGA
+			int resolution = -1, // -1 = AUTO, 0=HD4K 1=HD2K 2=HD1080 3=HD1200 4=HD720 5=SVGA 6=VGA
 			int quality = 1,    // 0=NONE, 1=PERFORMANCE, 2=QUALITY
 			int sensingMode = 0,// 0=STANDARD, 1=FILL
 			int confidenceThr = 100,
@@ -63,7 +61,7 @@ public:
 			int texturenessConfidenceThr = 90); // introduced with ZED SDK 3
 	CameraStereoZed(
 			const std::string & svoFilePath,
-			int quality = 1,    // 0=NONE, 1=PERFORMANCE, 2=QUALITY
+			int quality = 1,    // 0=NONE, 1=PERFORMANCE, 2=QUALITY, 3=NEURAL
 			int sensingMode = 0,// 0=STANDARD, 1=FILL
 			int confidenceThr = 100,
 			bool computeOdometry = false,
@@ -78,12 +76,12 @@ public:
 	virtual bool isCalibrated() const;
 	virtual std::string getSerial() const;
 	virtual bool odomProvided() const;
-	virtual bool getPose(double stamp, Transform & pose, cv::Mat & covariance);
+	virtual bool getPose(double stamp, Transform & pose, cv::Mat & covariance, double maxWaitTime = 0.0);
 
-	void publishInterIMU(bool enabled);
+	void postInterIMUPublic(const IMU & imu, double stamp);
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 #ifdef RTABMAP_ZED
@@ -102,7 +100,6 @@ private:
 	bool computeOdometry_;
 	bool lost_;
 	bool force3DoF_;
-	bool publishInterIMU_;
 	ZedIMUThread * imuPublishingThread_;
 #endif
 };

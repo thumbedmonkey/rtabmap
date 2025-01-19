@@ -13,8 +13,10 @@ SET(SRC_FILES
     
     Recovery.cpp
     
+    SensorCapture.cpp
+    SensorCaptureThread.cpp
+    
     Camera.cpp
-    CameraThread.cpp
     CameraModel.cpp
     
     camera/CameraFreenect.cpp
@@ -38,6 +40,7 @@ SET(SRC_FILES
     camera/CameraVideo.cpp
     camera/CameraMyntEye.cpp
     camera/CameraDepthAI.cpp
+	camera/CameraSeerSense.cpp
     
     EpipolarGeometry.cpp
     VisualWord.cpp
@@ -61,6 +64,8 @@ SET(SRC_FILES
     util3d_correspondences.cpp
     util3d_motion_estimation.cpp
     
+	rvl_codec.cpp
+	
     SensorData.cpp
     Graph.cpp
     Compression.cpp
@@ -87,12 +92,14 @@ SET(SRC_FILES
     odometry/OdometryViso2.cpp
     odometry/OdometryDVO.cpp
     odometry/OdometryOkvis.cpp
-    odometry/OdometryORBSLAM.cpp
+    odometry/OdometryORBSLAM2.cpp
+    odometry/OdometryORBSLAM3.cpp
     odometry/OdometryLOAM.cpp
     odometry/OdometryFLOAM.cpp
     odometry/OdometryMSCKF.cpp
     odometry/OdometryVINS.cpp
     odometry/OdometryOpenVINS.cpp
+    odometry/OdometryOpen3D.cpp
     
     IMU.cpp
     IMUThread.cpp
@@ -105,9 +112,15 @@ SET(SRC_FILES
     stereo/StereoBM.cpp
     stereo/StereoSGBM.cpp
     
-    OccupancyGrid.cpp
+    GlobalMap.cpp
+    LocalGridMaker.cpp
+    LocalGrid.cpp
+    global_map/OccupancyGrid.cpp
+    global_map/CloudMap.cpp
     
     MarkerDetector.cpp
+    
+    GlobalDescriptorExtractor.cpp
     
     GainCompensator.cpp
 
@@ -126,6 +139,13 @@ SET(SRC_FILES
     opencv/five-point.cpp
 )
 
+IF(PCL_VERSION VERSION_GREATER_EQUAL "1.8")
+SET(SRC_FILES
+    ${SRC_FILES}
+    lidar/LidarVLP16.cpp
+)
+ENDIF(PCL_VERSION VERSION_GREATER_EQUAL "1.8")
+
 IF(OpenCV_VERSION_MAJOR EQUAL 2)
 SET(SRC_FILES
     ${SRC_FILES}
@@ -142,29 +162,39 @@ IF(MSVC)
 ENDIF(MSVC)
 
 SET(INCLUDE_DIRS
-    ${PROJECT_SOURCE_DIR}/utilite/include
-	${CMAKE_CURRENT_SOURCE_DIR}/../include
-	${CMAKE_CURRENT_SOURCE_DIR}
-	${CMAKE_CURRENT_BINARY_DIR}
-    ${OpenCV_INCLUDE_DIRS}
-	${PCL_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/include
 	${ZLIB_INCLUDE_DIRS}
 )
 
-SET(LIBRARIES
-	${OpenCV_LIBS} 
-	${PCL_LIBRARIES} 
-	${ZLIB_LIBRARIES} 
+SET(PUBLIC_INCLUDE_DIRS
+ 	${OpenCV_INCLUDE_DIRS}
+ 	${PCL_INCLUDE_DIRS}
 )
 
-IF(Sqlite3_FOUND)
+SET(LIBRARIES
+	${ZLIB_LIBRARIES}
+)
+
+# Issue that qhull dependency uses optimized and debug keywords,
+# which are converted to \$<\$<NOT:\$<CONFIG:DEBUG>> and \$<\$<CONFIG:DEBUG>
+# in RTABMap_coreTargets.cmake (not sure why?!).
+list(REMOVE_ITEM PCL_LIBRARIES "debug" "optimized")
+SET(PUBLIC_LIBRARIES
+	${OpenCV_LIBS}
+	${PCL_LIBRARIES}
+)
+
+IF(SQLite3_FOUND)
     SET(INCLUDE_DIRS
 		${INCLUDE_DIRS}
-		${Sqlite3_INCLUDE_DIRS}
+		${SQLite3_INCLUDE_DIRS}
 	)
 	SET(LIBRARIES
 		${LIBRARIES}
-		${Sqlite3_LIBRARIES}
+		${SQLite3_LIBRARIES}
 	)
 ELSE()
 	SET(SRC_FILES
@@ -193,23 +223,29 @@ IF(TORCH_FOUND)
 	)
 ENDIF(TORCH_FOUND)
 
-IF(Python3_FOUND)
+IF(WITH_PYTHON AND Python3_FOUND)
+	SET(PUBLIC_LIBRARIES
+		${PUBLIC_LIBRARIES}
+		Python3::Python
+		Python3::NumPy
+	)
 	SET(LIBRARIES
 		${LIBRARIES}
-		Python3::Python
+		pybind11::embed
 	)
 	SET(SRC_FILES
 		${SRC_FILES}
 		python/PythonInterface.cpp
 		python/PyMatcher.cpp
 		python/PyDetector.cpp
+		python/PyDescriptor.cpp
 	)
 	 SET(INCLUDE_DIRS
 	    ${TORCH_INCLUDE_DIRS}
 	    ${CMAKE_CURRENT_SOURCE_DIR}/python
 		${INCLUDE_DIRS}
 	)
-ENDIF(Python3_FOUND)
+ENDIF(WITH_PYTHON AND Python3_FOUND)
 
 
 
@@ -261,18 +297,18 @@ IF(KinectSDK2_FOUND)
 ENDIF(KinectSDK2_FOUND)
 
 IF(k4a_FOUND)
-	SET(INCLUDE_DIRS
-		${INCLUDE_DIRS}
+	SET(PUBLIC_INCLUDE_DIRS
+		${PUBLIC_INCLUDE_DIRS}
 		${k4a_INCLUDE_DIRS}
 	)
 	IF(WIN32)
-	    SET(LIBRARIES
-			${LIBRARIES}
+	    SET(PUBLIC_LIBRARIES
+			${PUBLIC_LIBRARIES}
 			${k4a_LIBRARIES}
 		)
 	ELSE()
-		SET(LIBRARIES
-			${LIBRARIES}
+		SET(PUBLIC_LIBRARIES
+			${PUBLIC_LIBRARIES}
 			k4a::k4a 
 			k4a::k4arecord
 		)
@@ -291,23 +327,23 @@ IF(RealSense_FOUND)
 ENDIF(RealSense_FOUND)
 
 IF(realsense2_FOUND)
-	SET(INCLUDE_DIRS
-		${INCLUDE_DIRS}
+	SET(PUBLIC_INCLUDE_DIRS
+		${PUBLIC_INCLUDE_DIRS}
 		${realsense2_INCLUDE_DIRS}
 	)
 	IF(WIN32)
-	    SET(LIBRARIES
-			${LIBRARIES}
+	    SET(PUBLIC_LIBRARIES
+			${PUBLIC_LIBRARIES}
 			${RealSense2_LIBRARIES}
 		)
 	ELSEIF(APPLE)
-	    SET(LIBRARIES
-			${LIBRARIES}
+	    SET(PUBLIC_LIBRARIES
+			${PUBLIC_LIBRARIES}
 			${realsense2_LIBRARIES}
 		)
 	ELSE()
-		SET(LIBRARIES
-			${LIBRARIES}
+		SET(PUBLIC_LIBRARIES
+			${PUBLIC_LIBRARIES}
 			realsense2::realsense2 # target
 		)
 	ENDIF()
@@ -343,12 +379,19 @@ IF(mynteye_FOUND)
 ENDIF(mynteye_FOUND)
 
 IF(depthai_FOUND)
-	SET(LIBRARIES
-		${LIBRARIES}
+	SET(PUBLIC_LIBRARIES
+		${PUBLIC_LIBRARIES}
 		depthai::core
 		depthai::opencv
 	)
 ENDIF(depthai_FOUND)
+
+IF(xvsdk_FOUND)
+	SET(PUBLIC_LIBRARIES
+		${PUBLIC_LIBRARIES}
+		${xvsdk_LIBRARIES}
+	)
+ENDIF(xvsdk_FOUND)
 
 IF(TARGET OpenMP::OpenMP_CXX)
 	SET(LIBRARIES
@@ -371,18 +414,22 @@ ENDIF(WITH_TORO)
 
 IF(G2O_FOUND)
 	IF(g2o_FOUND)
-	  SET(LIBRARIES
-             ${LIBRARIES}
+	  SET(LIBRARIES ${LIBRARIES}
 	     g2o::core
-	     g2o::solver_cholmod
 	     g2o::solver_eigen
 	     g2o::solver_pcg
-	     g2o::solver_csparse
-	     g2o::csparse_extension
 	     g2o::types_slam2d
 	     g2o::types_slam3d
-	     g2o::types_sba
-	  )
+	     g2o::types_sba)
+	  IF(TARGET g2o::solver_csparse)
+	    SET(LIBRARIES ${LIBRARIES}
+          g2o::solver_csparse
+          g2o::csparse_extension)
+      ENDIF(TARGET g2o::solver_csparse)
+      IF(TARGET g2o::solver_cholmod)
+        SET(LIBRARIES ${LIBRARIES}
+          g2o::solver_cholmod)
+      ENDIF(TARGET g2o::solver_cholmod)
 	ELSE()
 	  SET(INCLUDE_DIRS 
 		${INCLUDE_DIRS} 
@@ -393,13 +440,8 @@ IF(G2O_FOUND)
 		${G2O_LIBRARIES}
 	  )
 	ENDIF()
-	SET(SRC_FILES
-    		${SRC_FILES}
-		optimizer/g2o/edge_se3_xyzprior.cpp
-	)
 	IF(WITH_VERTIGO)
-		SET(SRC_FILES
-    			${SRC_FILES}
+		SET(SRC_FILES ${SRC_FILES}
 			optimizer/vertigo/g2o/edge_se2Switchable.cpp
 			optimizer/vertigo/g2o/edge_se3Switchable.cpp
 			optimizer/vertigo/g2o/edge_switchPrior.cpp
@@ -421,15 +463,22 @@ IF(cvsba_FOUND)
 ENDIF(cvsba_FOUND)
 
 IF(CERES_FOUND)
-	SET(INCLUDE_DIRS 
-		${INCLUDE_DIRS} 
-		${CERES_INCLUDE_DIRS}
+	SET(INCLUDE_DIRS
+	  ${INCLUDE_DIRS}
+	  ${CERES_INCLUDE_DIRS}
 	)
 	SET(LIBRARIES
-		${LIBRARIES}
-		${CERES_LIBRARIES}
+	  ${LIBRARIES}
+	  ${CERES_LIBRARIES}
 	)
 ENDIF(CERES_FOUND)
+
+IF(MRPT_FOUND)
+	SET(LIBRARIES
+	  ${LIBRARIES}
+	  ${MRPT_LIBRARIES}
+	)
+ENDIF(MRPT_FOUND)
 
 IF(libpointmatcher_FOUND)
 	SET(INCLUDE_DIRS 
@@ -449,6 +498,13 @@ IF(CCCoreLib_FOUND)
 	)
 ENDIF(CCCoreLib_FOUND)
 
+IF(Open3D_FOUND)
+    SET(LIBRARIES
+        ${LIBRARIES}
+        Open3D::Open3D
+    )
+ENDIF(Open3D_FOUND)
+
 IF(FastCV_FOUND)
 	SET(INCLUDE_DIRS 
 		${INCLUDE_DIRS} 
@@ -459,6 +515,13 @@ IF(FastCV_FOUND)
 		${FastCV_LIBRARIES}
 	)
 ENDIF(FastCV_FOUND)
+
+IF(opengv_FOUND)
+    SET(LIBRARIES
+        ${LIBRARIES}
+        opengv
+    )
+ENDIF(opengv_FOUND)
 
 IF(PDAL_FOUND)
 	SET(INCLUDE_DIRS
@@ -477,6 +540,30 @@ IF(PDAL_FOUND)
 	    add_definitions("-DRTABMAP_PDAL_16")
 	ENDIF(PDAL_VERSION VERSION_LESS "1.7")
 ENDIF(PDAL_FOUND)
+
+IF(libLAS_FOUND)
+	SET(INCLUDE_DIRS
+		${INCLUDE_DIRS}
+		${libLAS_INCLUDE_DIRS}
+	)
+	SET(LIBRARIES
+		${LIBRARIES}
+		${libLAS_LIBRARIES}
+	)
+	SET(SRC_FILES
+		${SRC_FILES}
+		LASWriter.cpp
+	)
+ENDIF(libLAS_FOUND)
+
+
+IF(CudaSift_FOUND)
+	#target
+	SET(LIBRARIES
+		${LIBRARIES}
+		cudasift
+	)
+ENDIF(CudaSift_FOUND)
 
 
 IF(loam_velodyne_FOUND)
@@ -536,19 +623,48 @@ IF(ZEDOC_FOUND)
 ENDIF(ZEDOC_FOUND)
 
 IF(octomap_FOUND)
-    SET(INCLUDE_DIRS
-		${INCLUDE_DIRS}
-		${OCTOMAP_INCLUDE_DIRS}
-	)
-	SET(LIBRARIES
-		${LIBRARIES}
-		${OCTOMAP_LIBRARIES}
-	)
+    IF(TARGET octomap)
+        SET(PUBLIC_LIBRARIES
+            ${PUBLIC_LIBRARIES}
+            octomap
+        )
+    ELSE()
+        SET(PUBLIC_INCLUDE_DIRS
+            ${PUBLIC_INCLUDE_DIRS}
+            ${OCTOMAP_INCLUDE_DIRS}
+        )
+        SET(PUBLIC_LIBRARIES
+            ${PUBLIC_LIBRARIES}
+            ${OCTOMAP_LIBRARIES}
+        )
+    ENDIF()
 	SET(SRC_FILES
     	${SRC_FILES}
-		OctoMap.cpp
+		global_map/OctoMap.cpp
 	)
 ENDIF(octomap_FOUND)
+
+IF(grid_map_core_FOUND)
+    IF(TARGET grid_map_core::grid_map_core)
+        SET(LIBRARIES
+            ${LIBRARIES}
+            grid_map_core::grid_map_core
+        )
+    ELSE()
+        SET(INCLUDE_DIRS
+            ${INCLUDE_DIRS}
+            ${grid_map_core_INCLUDE_DIRS}
+        )
+        SET(LIBRARIES
+            ${LIBRARIES}
+            ${grid_map_core_LIBRARIES}
+        )
+    ENDIF()
+	SET(SRC_FILES
+    	${SRC_FILES}
+		global_map/GridMap.cpp
+	)
+ENDIF(grid_map_core_FOUND)
 
 IF(AliceVision_FOUND)
   SET(LIBRARIES
@@ -676,6 +792,13 @@ IF(GTSAM_FOUND)
 		${LIBRARIES}
 		gtsam # Windows: Place static libs at the end
 	)
+	IF(WIN32)
+		#explicitly add metis target on windows (after gtsam target)
+		SET(LIBRARIES
+			${LIBRARIES}
+			metis
+		)
+	ENDIF(WIN32)
 ENDIF(GTSAM_FOUND)
 
 IF(WITH_MADGWICK)
@@ -704,34 +827,18 @@ foreach(arg ${RESOURCES})
    get_filename_component(filename ${arg} NAME)
    string(REPLACE "." "_" output ${filename})
    set(RESOURCES_HEADERS "${RESOURCES_HEADERS}" "${CMAKE_CURRENT_BINARY_DIR}/${output}.h")
+   set_property(SOURCE "${CMAKE_CURRENT_BINARY_DIR}/${output}.h" PROPERTY SKIP_AUTOGEN ON)
 endforeach(arg ${RESOURCES})
 
 #MESSAGE(STATUS "RESOURCES = ${RESOURCES}")
 #MESSAGE(STATUS "RESOURCES_HEADERS = ${RESOURCES_HEADERS}")
 
-IF(ANDROID)
-
-   IF(NOT RTABMAP_RES_TOOL)
-      find_host_program(RTABMAP_RES_TOOL rtabmap-res_tool PATHS ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-      IF(NOT RTABMAP_RES_TOOL)
-         MESSAGE( FATAL_ERROR "RTABMAP_RES_TOOL is not defined (it is the path to \"rtabmap-res_tool\" application created by a non-Android build)." )
-      ENDIF(NOT RTABMAP_RES_TOOL)
-   ENDIF(NOT RTABMAP_RES_TOOL)
-
-   ADD_CUSTOM_COMMAND(
-      OUTPUT ${RESOURCES_HEADERS}
-      COMMAND ${RTABMAP_RES_TOOL} -n rtabmap -p ${CMAKE_CURRENT_BINARY_DIR} ${RESOURCES}
-      COMMENT "[Creating resources]"
-      DEPENDS ${RESOURCES}
-   )
-ELSE()
-   ADD_CUSTOM_COMMAND(
-      OUTPUT ${RESOURCES_HEADERS}
-      COMMAND ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rtabmap-res_tool -n rtabmap -p ${CMAKE_CURRENT_BINARY_DIR} ${RESOURCES}
-      COMMENT "[Creating resources]"
-      DEPENDS ${RESOURCES} res_tool
-   )
-ENDIF()
+ADD_CUSTOM_COMMAND(
+	OUTPUT ${RESOURCES_HEADERS}
+	COMMAND res_tool -n rtabmap -p ${CMAKE_CURRENT_BINARY_DIR} ${RESOURCES}
+	COMMENT "[Creating resources]"
+	DEPENDS ${RESOURCES}
+)
 
 ####################################
 # Generate resources files END
@@ -739,30 +846,66 @@ ENDIF()
 
 add_definitions(${PCL_DEFINITIONS})
 
-
-# Make sure the compiler can find include files from our library.
-INCLUDE_DIRECTORIES(${INCLUDE_DIRS})
-
 # Add binary that is built from the source file "main.cpp".
 # The extension is automatically found.
 ADD_LIBRARY(rtabmap_core ${SRC_FILES} ${RESOURCES_HEADERS})
-TARGET_LINK_LIBRARIES(rtabmap_core rtabmap_utilite ${LIBRARIES})
+ADD_LIBRARY(rtabmap::core ALIAS rtabmap_core)
+
+generate_export_header(rtabmap_core
+ DEPRECATED_MACRO_NAME RTABMAP_DEPRECATED)
+
+target_include_directories(rtabmap_core PUBLIC 
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include;${CMAKE_CURRENT_BINARY_DIR}/include;${PUBLIC_INCLUDE_DIRS};${INCLUDE_DIRS}>"
+  "$<INSTALL_INTERFACE:${INSTALL_INCLUDE_DIR};${PUBLIC_INCLUDE_DIRS}>")
+  
+TARGET_LINK_LIBRARIES(rtabmap_core 
+  PUBLIC 
+    rtabmap_utilite 
+    ${PUBLIC_LIBRARIES}
+  PRIVATE 
+    ${LIBRARIES})
 
 SET_TARGET_PROPERTIES(
      rtabmap_core
    PROPERTIES
      VERSION ${RTABMAP_VERSION}
      SOVERSION ${RTABMAP_MAJOR_VERSION}.${RTABMAP_MINOR_VERSION}
+     EXPORT_NAME "core"
 )
 
-INSTALL(TARGETS rtabmap_core
+INSTALL(TARGETS rtabmap_core EXPORT rtabmap_coreTargets
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT runtime
         LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}" COMPONENT devel
         ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}" COMPONENT devel)
-		
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../include/ 
-		DESTINATION "${INSTALL_INCLUDE_DIR}"
-		COMPONENT devel 
-		FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp" 
-		PATTERN ".svn" EXCLUDE)
+        
+configure_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/rtabmap_core_export.h
+  ${CMAKE_CURRENT_BINARY_DIR}/include/${PROJECT_PREFIX}/core/rtabmap_core_export.h
+  COPYONLY)
+  
+install(
+  DIRECTORY
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/${PROJECT_PREFIX}
+    ${CMAKE_CURRENT_BINARY_DIR}/include/${PROJECT_PREFIX}
+  DESTINATION
+    ${INSTALL_INCLUDE_DIR}
+  COMPONENT
+    devel
+  FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp"
+)
 
+export(EXPORT rtabmap_coreTargets
+  FILE "${CMAKE_CURRENT_BINARY_DIR}/../../${PROJECT_NAME}_coreTargets.cmake"
+  NAMESPACE rtabmap::
+)
+
+install(EXPORT rtabmap_coreTargets
+  FILE
+    ${PROJECT_NAME}_coreTargets.cmake
+  DESTINATION
+    ${INSTALL_CMAKE_DIR}
+  NAMESPACE rtabmap::
+  COMPONENT
+    devel
+)
+	

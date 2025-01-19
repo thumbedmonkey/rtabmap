@@ -32,7 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace rtabmap
 {
 
-class RTABMAP_EXP CameraRGBDImages :
+class RTABMAP_CORE_EXPORT CameraRGBDImages :
 	public CameraImages
 {
 public:
@@ -53,7 +53,7 @@ public:
 	virtual void setMaxFrames(int value) {CameraImages::setMaxFrames(value);cameraDepth_.setMaxFrames(value);}
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 	CameraImages cameraDepth_;

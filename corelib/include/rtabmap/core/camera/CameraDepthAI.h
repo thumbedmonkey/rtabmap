@@ -27,8 +27,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
 #include "rtabmap/core/StereoCameraModel.h"
 #include "rtabmap/core/Camera.h"
 #include "rtabmap/core/Version.h"
@@ -43,7 +41,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace rtabmap
 {
 
-class RTABMAP_EXP CameraDepthAI :
+class RTABMAP_CORE_EXPORT CameraDepthAI :
 	public Camera
 {
 public:
@@ -51,35 +49,65 @@ public:
 
 public:
 	CameraDepthAI(
-			const std::string & deviceSerial = "",
+			const std::string & mxidOrName = "",
 			int resolution = 1, // 0=720p, 1=800p, 2=400p
 			float imageRate=0.0f,
 			const Transform & localTransform = Transform::getIdentity());
 	virtual ~CameraDepthAI();
 
-	void setOutputDepth(bool enabled, int confidence = 200);
+	void setOutputMode(int outputMode = 0);
+	void setDepthProfile(int confThreshold = 200, int lrcThreshold = 5);
+	void setExtendedDisparity(bool extendedDisparity);
+	void setSubpixelMode(bool enabled, int fractionalBits = 3);
+	void setCompanding(bool enabled, int width=96);
+	void setRectification(bool useSpecTranslation, float alphaScaling = 0.0f, bool enabled=true);
+	void setIMU(bool imuPublished, bool publishInterIMU);
+	void setIrIntensity(float dotIntensity = 0.0f, float floodIntensity = 0.0f);
+	void setDetectFeatures(int detectFeatures = 0);
+	void setBlobPath(const std::string & blobPath);
+	void setGFTTDetector(bool useHarrisDetector = false, float minDistance = 7.0f, int numTargetFeatures = 1000);
+	void setSuperPointDetector(float threshold = 0.01f, bool nms = true, int nmsRadius = 4);
 
 	virtual bool init(const std::string & calibrationFolder = ".", const std::string & cameraName = "");
 	virtual bool isCalibrated() const;
 	virtual std::string getSerial() const;
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 #ifdef RTABMAP_DEPTHAI
 	StereoCameraModel stereoModel_;
+	cv::Size targetSize_;
 	Transform imuLocalTransform_;
-	std::string deviceSerial_;
-	bool outputDepth_;
-	int depthConfidence_;
+	std::string mxidOrName_;
+	int outputMode_;
+	int confThreshold_;
+	int lrcThreshold_;
 	int resolution_;
+	bool extendedDisparity_;
+	int subpixelFractionalBits_;
+	int compandingWidth_;
+	bool useSpecTranslation_;
+	float alphaScaling_;
+	bool imagesRectified_;
+	bool imuPublished_;
+	bool publishInterIMU_;
+	float dotIntensity_;
+	float floodIntensity_;
+	int detectFeatures_;
+	bool useHarrisDetector_;
+	float minDistance_;
+	int numTargetFeatures_;
+	float threshold_;
+	bool nms_;
+	int nmsRadius_;
+	std::string blobPath_;
 	std::shared_ptr<dai::Device> device_;
-	std::shared_ptr<dai::DataOutputQueue> leftQueue_;
-	std::shared_ptr<dai::DataOutputQueue> rightOrDepthQueue_;
-	std::shared_ptr<dai::DataOutputQueue> imuQueue_;
+	std::shared_ptr<dai::DataOutputQueue> cameraQueue_;
 	std::map<double, cv::Vec3f> accBuffer_;
 	std::map<double, cv::Vec3f> gyroBuffer_;
+	UMutex imuMutex_;
 #endif
 };
 

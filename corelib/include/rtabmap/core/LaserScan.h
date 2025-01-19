@@ -28,13 +28,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef CORELIB_INCLUDE_RTABMAP_CORE_LASERSCAN_H_
 #define CORELIB_INCLUDE_RTABMAP_CORE_LASERSCAN_H_
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
+#include "rtabmap/core/rtabmap_core_export.h" // DLL export/import defines
 
 #include <rtabmap/core/Transform.h>
 
 namespace rtabmap {
 
-class RTABMAP_EXP LaserScan
+class RTABMAP_CORE_EXPORT LaserScan
 {
 public:
 	enum Format{kUnknown=0,
@@ -47,7 +47,8 @@ public:
 		kXYZRGB=7,
 		kXYZNormal=8,
 		kXYZINormal=9,
-		kXYZRGBNormal=10};
+		kXYZRGBNormal=10,
+		kXYZIT=11};
 
 	static std::string formatName(const Format & format);
 	static int channels(const Format & format);
@@ -55,6 +56,7 @@ public:
 	static bool isScanHasNormals(const Format & format);
 	static bool isScanHasRGB(const Format & format);
 	static bool isScanHasIntensity(const Format & format);
+	static bool isScanHasTime(const Format & format);
 	static LaserScan backwardCompatibility(
 			const cv::Mat & oldScanFormat,
 			int maxPoints = 0,
@@ -75,24 +77,26 @@ public:
 			int maxPoints,
 			float maxRange,
 			const Transform & localTransform = Transform::getIdentity());
-	RTABMAP_DEPRECATED(LaserScan(const LaserScan & data,
+	// Use version without \"format\" argument.
+	RTABMAP_DEPRECATED LaserScan(const LaserScan & data,
 			int maxPoints,
 			float maxRange,
 			Format format,
-			const Transform & localTransform = Transform::getIdentity()), "Use version without \"format\" argument.");
+			const Transform & localTransform = Transform::getIdentity());
 	LaserScan(const cv::Mat & data,
 			int maxPoints,
 			float maxRange,
 			Format format,
 			const Transform & localTransform = Transform::getIdentity());
-	RTABMAP_DEPRECATED(LaserScan(const LaserScan & data,
+	// Use version without \"format\" argument.
+	RTABMAP_DEPRECATED LaserScan(const LaserScan & data,
 			Format format,
 			float minRange,
 			float maxRange,
 			float angleMin,
 			float angleMax,
 			float angleIncrement,
-			const Transform & localTransform = Transform::getIdentity()), "Use version without \"format\" argument.");
+			const Transform & localTransform = Transform::getIdentity());
 	LaserScan(const LaserScan & data,
 			float minRange,
 			float maxRange,
@@ -119,22 +123,27 @@ public:
 	float angleMin() const {return angleMin_;}
 	float angleMax() const {return angleMax_;}
 	float angleIncrement() const {return angleIncrement_;}
+	void setLocalTransform(const Transform & t) {localTransform_ = t;}
 	Transform localTransform() const {return localTransform_;}
 
 	bool empty() const {return data_.empty();}
 	bool isEmpty() const {return data_.empty();}
-	int size() const {return data_.cols;}
+	int size() const {return data_.total();}
 	int dataType() const {return data_.type();}
 	bool is2d() const {return isScan2d(format_);}
 	bool hasNormals() const {return isScanHasNormals(format_);}
 	bool hasRGB() const {return isScanHasRGB(format_);}
 	bool hasIntensity() const {return isScanHasIntensity(format_);}
+	bool hasTime() const {return isScanHasTime(format_);}
 	bool isCompressed() const {return !data_.empty() && data_.type()==CV_8UC1;}
+	bool isOrganized() const {return data_.rows > 1;}
 	LaserScan clone() const;
+	LaserScan densify() const;
 
 	int getIntensityOffset() const {return hasIntensity()?(is2d()?2:3):-1;}
 	int getRGBOffset() const {return hasRGB()?(is2d()?2:3):-1;}
 	int getNormalsOffset() const {return hasNormals()?(2 + (is2d()?0:1) + ((hasRGB() || hasIntensity())?1:0)):-1;}
+	int getTimeOffset() const {return hasTime()?4:-1;}
 
 	float & field(unsigned int pointIndex, unsigned int channelOffset);
 

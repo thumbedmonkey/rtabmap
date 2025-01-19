@@ -100,12 +100,40 @@ AboutDialog::AboutDialog(QWidget * parent) :
 	_ui->label_fastcv->setText("No");
 	_ui->label_fastcv_license->setEnabled(false);
 #endif
+#ifdef RTABMAP_PDAL
+	_ui->label_pdal->setText("Yes");
+	_ui->label_pdal_license->setEnabled(true);
+#else
+	_ui->label_pdal->setText("No");
+	_ui->label_pdal_license->setEnabled(false);
+#endif
+#ifdef RTABMAP_LIBLAS
+	_ui->label_liblas->setText("Yes");
+	_ui->label_liblas_license->setEnabled(true);
+#else
+	_ui->label_liblas->setText("No");
+	_ui->label_liblas_license->setEnabled(false);
+#endif
+#ifdef RTABMAP_CUDASIFT
+	_ui->label_cudasift->setText("Yes");
+	_ui->label_cudasift_license->setEnabled(true);
+#else
+	_ui->label_cudasift->setText("No");
+	_ui->label_cudasift_license->setEnabled(false);
+#endif
 #ifdef RTABMAP_OCTOMAP
 	_ui->label_octomap->setText("Yes");
 	_ui->label_octomap_license->setEnabled(true);
 #else
 	_ui->label_octomap->setText("No");
 	_ui->label_octomap_license->setEnabled(false);
+#endif
+#ifdef RTABMAP_GRIDMAP
+	_ui->label_gridmap->setText("Yes");
+	_ui->label_gridmap_license->setEnabled(true);
+#else
+	_ui->label_gridmap->setText("No");
+	_ui->label_gridmap_license->setEnabled(false);
 #endif
 #ifdef RTABMAP_CPUTSDF
 	_ui->label_cputsdf->setText("Yes");
@@ -129,6 +157,8 @@ AboutDialog::AboutDialog(QWidget * parent) :
 
 	_ui->label_freenect->setText(CameraFreenect::available()?"Yes":"No");
 	_ui->label_freenect_license->setEnabled(CameraFreenect::available());
+	_ui->label_openni->setText(CameraOpenni::available()?"Yes":"No");
+	_ui->label_openni_license->setEnabled(CameraOpenni::available());
 	_ui->label_openni2->setText(CameraOpenNI2::available()?"Yes":"No");
 	_ui->label_openni2_license->setEnabled(CameraOpenNI2::available());
 	_ui->label_freenect2->setText(CameraFreenect2::available()?"Yes":"No");
@@ -148,6 +178,7 @@ AboutDialog::AboutDialog(QWidget * parent) :
 	_ui->label_mynteye->setText(CameraMyntEye::available() ? "Yes" : "No");
 	_ui->label_depthai->setText(CameraDepthAI::available() ? "Yes" : "No");
 	_ui->label_depthai_license->setEnabled(CameraDepthAI::available());
+	_ui->label_xvsdk->setText(CameraSeerSense::available() ? "Yes" : "No");
 
 	_ui->label_toro->setText(Optimizer::isAvailable(Optimizer::kTypeTORO)?"Yes":"No");
 	_ui->label_toro_license->setEnabled(Optimizer::isAvailable(Optimizer::kTypeTORO)?true:false);
@@ -159,6 +190,14 @@ AboutDialog::AboutDialog(QWidget * parent) :
 	_ui->label_cvsba_license->setEnabled(Optimizer::isAvailable(Optimizer::kTypeCVSBA)?true:false);
 	_ui->label_ceres->setText(Optimizer::isAvailable(Optimizer::kTypeCeres)?"Yes":"No");
 	_ui->label_ceres_license->setEnabled(Optimizer::isAvailable(Optimizer::kTypeCeres)?true:false);
+
+#ifdef RTABMAP_MRPT
+	_ui->label_mrpt->setText("Yes");
+	_ui->label_mrpt_license->setEnabled(true);
+#else
+	_ui->label_mrpt->setText("No");
+	_ui->label_mrpt_license->setEnabled(false);
+#endif
 
 #ifdef RTABMAP_POINTMATCHER
 	_ui->label_libpointmatcher->setText("Yes");
@@ -174,6 +213,14 @@ AboutDialog::AboutDialog(QWidget * parent) :
 #else
 	_ui->label_cccorelib->setText("No");
 	_ui->label_cccorelib_license->setEnabled(false);
+#endif
+
+#ifdef RTABMAP_OPEN3D
+	_ui->label_open3d->setText("Yes");
+	_ui->label_open3d_license->setEnabled(true);
+#else
+	_ui->label_open3d->setText("No");
+	_ui->label_open3d_license->setEnabled(false);
 #endif
 
 #ifdef RTABMAP_FOVIS

@@ -89,13 +89,13 @@ Java_com_introlab_rtabmap_RTABMapLib_setScreenRotation(
 
 JNIEXPORT int JNICALL
 Java_com_introlab_rtabmap_RTABMapLib_openDatabase(
-    JNIEnv* env, jclass, jlong native_application, jstring databasePath, bool databaseInMemory, bool optimize)
+    JNIEnv* env, jclass, jlong native_application, jstring databasePath, bool databaseInMemory, bool optimize, bool clearDatabase)
 {
 	std::string databasePathC;
 	GetJStringContent(env,databasePath,databasePathC);
 	if(native_application)
 	{
-		return native(native_application)->openDatabase(databasePathC, databaseInMemory, optimize);
+		return native(native_application)->openDatabase(databasePathC, databaseInMemory, optimize, clearDatabase);
 	}
 	else
 	{
@@ -104,17 +104,17 @@ Java_com_introlab_rtabmap_RTABMapLib_openDatabase(
 	}
 }
 
-JNIEXPORT int JNICALL
-Java_com_introlab_rtabmap_RTABMapLib_openDatabase2(
-    JNIEnv* env, jclass, jlong native_application, jstring databaseSource, jstring databasePath, bool databaseInMemory, bool optimize)
+JNIEXPORT bool JNICALL
+Java_com_introlab_rtabmap_RTABMapLib_recover(
+    JNIEnv* env, jclass, jlong native_application, jstring from, jstring to)
 {
 	if(native_application)
 	{
-		std::string databasePathC;
-		GetJStringContent(env,databasePath,databasePathC);
-		std::string databaseSourceC;
-		GetJStringContent(env,databaseSource,databaseSourceC);
-		return native(native_application)->openDatabase(databasePathC, databaseInMemory, optimize, databaseSourceC);
+		std::string toC;
+		GetJStringContent(env,to,toC);
+		std::string fromC;
+		GetJStringContent(env,from,fromC);
+		return native(native_application)->recover(fromC, toC);
 	}
 	else
 	{
@@ -551,6 +551,20 @@ Java_com_introlab_rtabmap_RTABMapLib_setAppendMode(
 	}
 }
 JNIEXPORT void JNICALL
+Java_com_introlab_rtabmap_RTABMapLib_setUpstreamRelocalizationAccThr(
+		JNIEnv*, jclass, jlong native_application, float value)
+{
+	if(native_application)
+	{
+		return native(native_application)->setUpstreamRelocalizationAccThr(value);
+	}
+	else
+	{
+		UERROR("native_application is null!");
+	}
+}
+
+JNIEXPORT void JNICALL
 Java_com_introlab_rtabmap_RTABMapLib_setDataRecorderMode(
 		JNIEnv*, jclass, jlong native_application, bool enabled)
 {
@@ -863,22 +877,6 @@ Java_com_introlab_rtabmap_RTABMapLib_postProcessing(
 	{
 		UERROR("native_application is null!");
 		return -1;
-	}
-}
-
-JNIEXPORT void JNICALL
-Java_com_introlab_rtabmap_RTABMapLib_postCameraPoseEvent(
-		JNIEnv* env, jclass, jlong native_application,
-		float x, float y, float z, float qx, float qy, float qz, float qw, double stamp)
-{
-	if(native_application)
-	{
-		native(native_application)->postCameraPoseEvent(x,y,z,qx,qy,qz,qw, stamp);
-	}
-	else
-	{
-		UERROR("native_application is null!");
-		return;
 	}
 }
 

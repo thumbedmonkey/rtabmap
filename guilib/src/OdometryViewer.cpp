@@ -126,13 +126,13 @@ OdometryViewer::OdometryViewer(
 
 	//layout
 	QHBoxLayout * layout = new QHBoxLayout();
-	layout->setMargin(0);
+	layout->setContentsMargins(0,0,0,0);
 	layout->setSpacing(0);
 	layout->addWidget(imageView_,1);
 	layout->addWidget(cloudView_,1);
 
 	QHBoxLayout * hlayout2 = new QHBoxLayout();
-	hlayout2->setMargin(0);
+	hlayout2->setContentsMargins(0,0,0,0);
 	hlayout2->addWidget(maxCloudsLabel);
 	hlayout2->addWidget(maxCloudsSpin_);
 	hlayout2->addWidget(voxelLabel);
@@ -151,7 +151,7 @@ OdometryViewer::OdometryViewer(
 	hlayout2->addWidget(closeButton);
 
 	QVBoxLayout * vlayout = new QVBoxLayout(this);
-	vlayout->setMargin(0);
+	vlayout->setContentsMargins(0,0,0,0);
 	vlayout->setSpacing(0);
 	vlayout->addLayout(layout, 1);
 	vlayout->addLayout(hlayout2);
@@ -216,7 +216,7 @@ void OdometryViewer::processData(const rtabmap::OdometryEvent & odom)
 	if(cloudShown_->isChecked() &&
 		!odom.data().imageRaw().empty() &&
 		!odom.data().depthOrRightRaw().empty() &&
-		(odom.data().stereoCameraModel().isValidForProjection() || odom.data().cameraModels().size()))
+		(odom.data().stereoCameraModels().size() || odom.data().cameraModels().size()))
 	{
 		UDEBUG("New pose = %s, quality=%d", odom.pose().prettyPrint().c_str(), quality);
 
@@ -303,9 +303,9 @@ void OdometryViewer::processData(const rtabmap::OdometryEvent & odom)
 		{
 			cloudView_->updateCameraFrustums(odom.pose(), odom.data().cameraModels());
 		}
-		else if(!odom.data().stereoCameraModel().localTransform().isNull())
+		else if(odom.data().stereoCameraModels().size() && !odom.data().stereoCameraModels()[0].localTransform().isNull())
 		{
-			cloudView_->updateCameraFrustum(odom.pose(), odom.data().stereoCameraModel());
+			cloudView_->updateCameraFrustums(odom.pose(), odom.data().stereoCameraModels());
 		}
 	}
 
@@ -489,6 +489,7 @@ void OdometryViewer::processData(const rtabmap::OdometryEvent & odom)
 
 	imageView_->update();
 	cloudView_->update();
+	cloudView_->refreshView();
 	QApplication::processEvents();
 	processingData_ = false;
 }

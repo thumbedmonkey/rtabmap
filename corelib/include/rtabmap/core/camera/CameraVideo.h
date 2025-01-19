@@ -27,15 +27,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
 #include <opencv2/highgui/highgui.hpp>
 #include "rtabmap/core/Camera.h"
 
 namespace rtabmap
 {
 
-class RTABMAP_EXP CameraVideo :
+class RTABMAP_CORE_EXPORT CameraVideo :
 	public Camera
 {
 public:
@@ -64,9 +62,10 @@ public:
 	 * has been loaded, thus resolution from calibration is used.
 	 * */
 	void setResolution(int width, int height) {_width=width, _height=height;}
+	void setFOURCC(const std::string & fourcc) { _fourcc = fourcc; }
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 	// File type
@@ -81,6 +80,7 @@ private:
 	std::string _guid;
 	int _width;
 	int _height;
+	std::string _fourcc;
 
 	CameraModel _model;
 };

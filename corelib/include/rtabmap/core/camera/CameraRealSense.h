@@ -27,9 +27,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
-
 #include "rtabmap/utilite/UMutex.h"
 #include "rtabmap/utilite/USemaphore.h"
 #include "rtabmap/core/CameraModel.h"
@@ -49,7 +46,7 @@ namespace rtabmap
 {
 
 class slam_event_handler;
-class RTABMAP_EXP CameraRealSense :
+class RTABMAP_CORE_EXPORT CameraRealSense :
 	public Camera
 {
 public:
@@ -75,7 +72,7 @@ public:
 	virtual bool odomProvided() const;
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 #ifdef RTABMAP_REALSENSE

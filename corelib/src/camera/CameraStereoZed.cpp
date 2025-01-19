@@ -28,7 +28,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <rtabmap/core/camera/CameraStereoZed.h>
 #include <rtabmap/utilite/UTimer.h>
 #include <rtabmap/utilite/UThread.h>
-#include <rtabmap/utilite/UEventsManager.h>
 #include <rtabmap/utilite/UConversion.h>
 
 #ifdef RTABMAP_ZED
@@ -167,12 +166,13 @@ IMU zedIMUtoIMU(const sl::SensorsData & sensorData, const Transform & imuLocalTr
 class ZedIMUThread: public UThread
 {
 public:
-	ZedIMUThread(float rate, sl::Camera * zed, const Transform & imuLocalTransform, bool accurate)
+	ZedIMUThread(float rate, sl::Camera * zed, CameraStereoZed * camera, const Transform & imuLocalTransform, bool accurate)
 	{
 		UASSERT(rate > 0.0f);
-		UASSERT(zed != 0);
+		UASSERT(zed != 0 && camera != 0);
 		rate_ = rate;
 		zed_= zed;
+		camera_ = camera;
 		accurate_ = accurate;
 		imuLocalTransform_ = imuLocalTransform;
 	}
@@ -212,19 +212,20 @@ private:
 		bool res = zed_->getIMUData(imudata, sl::TIME_REFERENCE_IMAGE);
 		if(res == sl::SUCCESS && imudata.valid)
 		{
-			UEventsManager::post(new IMUEvent(zedIMUtoIMU(imudata, imuLocalTransform_), UTimer::now()));
+			this->postInterIMU(zedIMUtoIMU(imudata, imuLocalTransform_), UTimer::now());
 		}
 #else
         sl::SensorsData sensordata;
-        sl::ERROR_CODE res = zed_->getSensorsData(sensordata, sl::TIME_REFERENCE::IMAGE);
+        sl::ERROR_CODE res = zed_->getSensorsData(sensordata, sl::TIME_REFERENCE::CURRENT);
         if(res == sl::ERROR_CODE::SUCCESS && sensordata.imu.is_available)
         {
-            UEventsManager::post(new IMUEvent(zedIMUtoIMU(sensordata, imuLocalTransform_), UTimer::now()));
+        	camera_->postInterIMUPublic(zedIMUtoIMU(sensordata, imuLocalTransform_), double(sensordata.imu.timestamp.getNanoseconds())/10e8);
         }
 #endif
 	}
 	float rate_;
 	sl::Camera * zed_;
+	CameraStereoZed * camera_;
 	bool accurate_;
 	Transform imuLocalTransform_;
 	UTimer frameRateTimer_;
@@ -239,6 +240,17 @@ bool CameraStereoZed::available()
 	return false;
 #endif
 }
+
+
+int CameraStereoZed::sdkVersion()
+{
+#ifdef RTABMAP_ZED
+	return ZED_SDK_MAJOR_VERSION;
+#else
+	return -1;
+#endif
+}
+
 
 CameraStereoZed::CameraStereoZed(
 		int deviceId,
@@ -268,12 +280,35 @@ CameraStereoZed::CameraStereoZed(
 	computeOdometry_(computeOdometry),
 	lost_(true),
 	force3DoF_(odomForce3DoF),
-	publishInterIMU_(false),
 	imuPublishingThread_(0)
 #endif
 {
 	UDEBUG("");
 #ifdef RTABMAP_ZED
+#if ZED_SDK_MAJOR_VERSION < 4
+	if(resolution_ == 1 || resolution_ == 2) // HD2K, HD1080
+	{
+		resolution_ -= 1; // HD2K=0, HD1080=1
+	}
+	if(resolution_ == 3) // HD1200
+	{
+		resolution_ = 1; // HD1080=1
+	}
+	if(resolution_ == 4 || resolution_ == -1)
+	{
+		resolution_ = 2; // HD720=2
+	}
+	else if(resolution_ == 5 || resolution_ == 6) // SVGA, VGA
+	{
+		resolution_ = 3; // VGA=3
+	}
+#else // ZED=4
+	if(resolution_ == -1)
+	{
+		resolution_ = int(sl::RESOLUTION::AUTO); // AUTO
+	}
+#endif
+
 #if ZED_SDK_MAJOR_VERSION < 3
 	UASSERT(resolution_ >= sl::RESOLUTION_HD2K && resolution_ <sl::RESOLUTION_LAST);
 	UASSERT(quality_ >= sl::DEPTH_MODE_NONE && quality_ <sl::DEPTH_MODE_LAST);
@@ -282,11 +317,16 @@ CameraStereoZed::CameraStereoZed(
 #else
     sl::RESOLUTION res = static_cast<sl::RESOLUTION>(resolution_);
     sl::DEPTH_MODE qual = static_cast<sl::DEPTH_MODE>(quality_);
-    sl::SENSING_MODE sens = static_cast<sl::SENSING_MODE>(sensingMode_);
 
-    UASSERT(res >= sl::RESOLUTION::HD2K && res < sl::RESOLUTION::LAST);
     UASSERT(qual >= sl::DEPTH_MODE::NONE && qual < sl::DEPTH_MODE::LAST);
+#if ZED_SDK_MAJOR_VERSION < 4
+	UASSERT(res >= sl::RESOLUTION::HD2K && res < sl::RESOLUTION::LAST);
+    sl::SENSING_MODE sens = static_cast<sl::SENSING_MODE>(sensingMode_);
     UASSERT(sens >= sl::SENSING_MODE::STANDARD && sens < sl::SENSING_MODE::LAST);
+#else
+	UASSERT(res >= sl::RESOLUTION::HD4K && res < sl::RESOLUTION::LAST);
+    UASSERT(sensingMode_ >= 0 && sensingMode_ < 2);
+#endif
     UASSERT(confidenceThr_ >= 0 && confidenceThr_ <=100);
     UASSERT(texturenessConfidenceThr_ >= 0 && texturenessConfidenceThr_ <=100);
 #endif
@@ -311,7 +351,13 @@ CameraStereoZed::CameraStereoZed(
 	src_(CameraVideo::kVideoFile),
 	usbDevice_(0),
 	svoFilePath_(filePath),
-	resolution_(2),
+#if ZED_SDK_MAJOR_VERSION < 3
+	resolution_(sl::RESOLUTION_HD720),
+#elif ZED_SDK_MAJOR_VERSION < 4
+	resolution_(sl::RESOLUTION::HD720),
+#else
+	resolution_(int(sl::RESOLUTION::AUTO)),
+#endif
 	quality_(quality),
 	selfCalibration_(selfCalibration),
 	sensingMode_(sensingMode),
@@ -320,7 +366,6 @@ CameraStereoZed::CameraStereoZed(
 	computeOdometry_(computeOdometry),
 	lost_(true),
 	force3DoF_(odomForce3DoF),
-	publishInterIMU_(false),
 	imuPublishingThread_(0)
 #endif
 {
@@ -334,11 +379,15 @@ CameraStereoZed::CameraStereoZed(
 #else
     sl::RESOLUTION res = static_cast<sl::RESOLUTION>(resolution_);
     sl::DEPTH_MODE qual = static_cast<sl::DEPTH_MODE>(quality_);
-    sl::SENSING_MODE sens = static_cast<sl::SENSING_MODE>(sensingMode_);
 
     UASSERT(res >= sl::RESOLUTION::HD2K && res < sl::RESOLUTION::LAST);
     UASSERT(qual >= sl::DEPTH_MODE::NONE && qual < sl::DEPTH_MODE::LAST);
+#if ZED_SDK_MAJOR_VERSION < 4
+    sl::SENSING_MODE sens = static_cast<sl::SENSING_MODE>(sensingMode_);
     UASSERT(sens >= sl::SENSING_MODE::STANDARD && sens < sl::SENSING_MODE::LAST);
+#else
+    UASSERT(sensingMode_ >= 0 && sensingMode_ < 2);
+#endif
     UASSERT(confidenceThr_ >= 0 && confidenceThr_ <=100);
     UASSERT(texturenessConfidenceThr_ >= 0 && texturenessConfidenceThr_ <=100);
 #endif
@@ -354,13 +403,6 @@ CameraStereoZed::~CameraStereoZed()
 	}
 	delete imuPublishingThread_;
 	delete zed_;
-#endif
-}
-
-void CameraStereoZed::publishInterIMU(bool enabled)
-{
-#ifdef RTABMAP_ZED
-	publishInterIMU_ = enabled;
 #endif
 }
 
@@ -465,27 +507,54 @@ bool CameraStereoZed::init(const std::string & calibrationFolder, const std::str
 	}
 
 	sl::CameraInformation infos = zed_->getCameraInformation();
+#if ZED_SDK_MAJOR_VERSION < 4
 	sl::CalibrationParameters *stereoParams = &(infos.calibration_parameters );
+#else
+	sl::CalibrationParameters *stereoParams = &(infos.camera_configuration.calibration_parameters );
+#endif
 	sl::Resolution res = stereoParams->left_cam.image_size;
 
+#if ZED_SDK_MAJOR_VERSION < 4
+	stereoModel_ = StereoCameraModel(
+		stereoParams->left_cam.fx,
+		stereoParams->left_cam.fy,
+		stereoParams->left_cam.cx,
+		stereoParams->left_cam.cy,
+		stereoParams->T[0],//baseline
+		this->getLocalTransform(),
+		cv::Size(res.width, res.height));
+#else
 	stereoModel_ = StereoCameraModel(
 		stereoParams->left_cam.fx, 
 		stereoParams->left_cam.fy, 
 		stereoParams->left_cam.cx, 
 		stereoParams->left_cam.cy, 
-		stereoParams->T[0],//baseline
+		stereoParams->getCameraBaseline(),
 		this->getLocalTransform(),
 		cv::Size(res.width, res.height));
+#endif
 
+#if ZED_SDK_MAJOR_VERSION < 4
+	UINFO("Calibration: fx=%f, fy=%f, cx=%f, cy=%f, baseline=%f, width=%d, height=%d, transform=%s",
+		stereoParams->left_cam.fx,
+		stereoParams->left_cam.fy,
+		stereoParams->left_cam.cx,
+		stereoParams->left_cam.cy,
+		stereoParams->T[0],//baseline
+		(int)res.width,
+		(int)res.height,
+		this->getLocalTransform().prettyPrint().c_str());
+#else
 	UINFO("Calibration: fx=%f, fy=%f, cx=%f, cy=%f, baseline=%f, width=%d, height=%d, transform=%s",
 			stereoParams->left_cam.fx,
 			stereoParams->left_cam.fy,
 			stereoParams->left_cam.cx,
 			stereoParams->left_cam.cy,
-			stereoParams->T[0],//baseline
+			stereoParams->getCameraBaseline(),
 			(int)res.width,
 			(int)res.height,
 			this->getLocalTransform().prettyPrint().c_str());
+#endif
 
 #if ZED_SDK_MAJOR_VERSION < 3
 	if(infos.camera_model == sl::MODEL_ZED_M)
@@ -493,14 +562,24 @@ bool CameraStereoZed::init(const std::string & calibrationFolder, const std::str
     if(infos.camera_model != sl::MODEL::ZED)
 #endif
 	{
+#if ZED_SDK_MAJOR_VERSION < 4
 		imuLocalTransform_ = this->getLocalTransform() * zedPoseToTransform(infos.camera_imu_transform).inverse();
-		UINFO("IMU local transform: %s (imu2cam=%s))",
-				imuLocalTransform_.prettyPrint().c_str(),
-				zedPoseToTransform(infos.camera_imu_transform).prettyPrint().c_str());
+#else
+		imuLocalTransform_ = this->getLocalTransform() * zedPoseToTransform(infos.sensors_configuration.camera_imu_transform).inverse();
+#endif
 
-		if(publishInterIMU_)
+#if ZED_SDK_MAJOR_VERSION < 4
+		UINFO("IMU local transform: %s (imu2cam=%s))",
+			imuLocalTransform_.prettyPrint().c_str(),
+			zedPoseToTransform(infos.camera_imu_transform).prettyPrint().c_str());
+#else
+		UINFO("IMU local transform: %s (imu2cam=%s))",
+			imuLocalTransform_.prettyPrint().c_str(),
+			zedPoseToTransform(infos.sensors_configuration.camera_imu_transform).prettyPrint().c_str());
+#endif
+		if(isInterIMUPublishing())
 		{
-			imuPublishingThread_ = new ZedIMUThread(200, zed_, imuLocalTransform_, true);
+			imuPublishingThread_ = new ZedIMUThread(200, zed_, this, imuLocalTransform_, true);
 			imuPublishingThread_->start();
 		}
 	}
@@ -541,7 +620,7 @@ bool CameraStereoZed::odomProvided() const
 #endif
 }
 
-bool CameraStereoZed::getPose(double stamp, Transform & pose, cv::Mat & covariance)
+bool CameraStereoZed::getPose(double stamp, Transform & pose, cv::Mat & covariance, double maxWaitTime)
 {
 #ifdef RTABMAP_ZED
 
@@ -617,14 +696,16 @@ bool CameraStereoZed::getPose(double stamp, Transform & pose, cv::Mat & covarian
 	return false;
 }
 
-SensorData CameraStereoZed::captureImage(CameraInfo * info)
+SensorData CameraStereoZed::captureImage(SensorCaptureInfo * info)
 {
 	SensorData data;
 #ifdef RTABMAP_ZED
 #if ZED_SDK_MAJOR_VERSION < 3
 	sl::RuntimeParameters rparam((sl::SENSING_MODE)sensingMode_, quality_ > 0, quality_ > 0, sl::REFERENCE_FRAME_CAMERA);
-#else
+#elif ZED_SDK_MAJOR_VERSION < 4
     sl::RuntimeParameters rparam((sl::SENSING_MODE)sensingMode_, quality_ > 0, confidenceThr_, texturenessConfidenceThr_, sl::REFERENCE_FRAME::CAMERA);
+#else
+    sl::RuntimeParameters rparam(quality_ > 0, sensingMode_ == 1, confidenceThr_, texturenessConfidenceThr_, sl::REFERENCE_FRAME::CAMERA);
 #endif
 
 	if(zed_)
@@ -643,17 +724,19 @@ SensorData CameraStereoZed::captureImage(CameraInfo * info)
 #else
 
 		sl::ERROR_CODE res;
+        sl::Timestamp timestamp;
 		bool imuReceived = true;
 		do
 		{
 			res = zed_->grab(rparam);
+			timestamp = zed_->getTimestamp(sl::TIME_REFERENCE::IMAGE);
 
 			// If the sensor supports IMU, wait IMU to be available before sending data.
 			if(imuPublishingThread_ == 0 && !imuLocalTransform_.isNull())
 			{
 				 sl::SensorsData imudatatmp;
 				res = zed_->getSensorsData(imudatatmp, sl::TIME_REFERENCE::IMAGE);
-				imuReceived = res == sl::ERROR_CODE::SUCCESS && imudatatmp.imu.is_available && imudatatmp.imu.timestamp.data_ns != 0;
+				imuReceived = res == sl::ERROR_CODE::SUCCESS && imudatatmp.imu.is_available && imudatatmp.imu.timestamp.getNanoseconds() != 0;
 			}
 		}
 		while(src_ == CameraVideo::kUsbDevice && (res!=sl::ERROR_CODE::SUCCESS || !imuReceived) && timer.elapsed() < 2.0);
@@ -684,8 +767,11 @@ SensorData CameraStereoZed::captureImage(CameraInfo * info)
                 zed_->retrieveMeasure(tmp,sl::MEASURE::DEPTH);
 #endif
 				slMat2cvMat(tmp).copyTo(depth);
-
+#if ZED_SDK_MAJOR_VERSION < 3
 				data = SensorData(left, depth, stereoModel_.left(), this->getNextSeqID(), UTimer::now());
+#else
+				data = SensorData(left, depth, stereoModel_.left(), this->getNextSeqID(), double(timestamp.getNanoseconds())/10e8);
+#endif
 			}
 			else
 			{
@@ -698,8 +784,11 @@ SensorData CameraStereoZed::captureImage(CameraInfo * info)
 				cv::Mat rgbaRight = slMat2cvMat(tmp);
 				cv::Mat right;
 				cv::cvtColor(rgbaRight, right, cv::COLOR_BGRA2GRAY);
-			
+#if ZED_SDK_MAJOR_VERSION < 3
 				data = SensorData(left, right, stereoModel_, this->getNextSeqID(), UTimer::now());
+#else
+				data = SensorData(left, right, stereoModel_, this->getNextSeqID(), double(timestamp.getNanoseconds())/10e8);
+#endif
 			}
 
 			if(imuPublishingThread_ == 0)
@@ -732,37 +821,41 @@ SensorData CameraStereoZed::captureImage(CameraInfo * info)
 				{
 					int trackingConfidence = pose.pose_confidence;
 					// FIXME What does pose_confidence == -1 mean?
-					if (trackingConfidence>0)
+					info->odomPose = zedPoseToTransform(pose);
+					if (!info->odomPose.isNull())
 					{
-						info->odomPose = zedPoseToTransform(pose);
-						if (!info->odomPose.isNull())
+#if ZED_SDK_MAJOR_VERSION >=3
+						if(pose.timestamp != timestamp)
 						{
-							//transform from:
-							// x->right, y->down, z->forward
-							//to:
-							// x->forward, y->left, z->up
-							info->odomPose = this->getLocalTransform() * info->odomPose * this->getLocalTransform().inverse();
-							if(force3DoF_)
-							{
-								info->odomPose = info->odomPose.to3DoF();
-							}
-							if (lost_)
-							{
-								info->odomCovariance = cv::Mat::eye(6, 6, CV_64FC1) * 9999.0f; // don't know transform with previous pose
-								lost_ = false;
-								UDEBUG("Init %s (var=%f)", info->odomPose.prettyPrint().c_str(), 9999.0f);
-							}
-							else
-							{
-								info->odomCovariance = cv::Mat::eye(6, 6, CV_64FC1) * 1.0f / float(trackingConfidence);
-								UDEBUG("Run %s (var=%f)", info->odomPose.prettyPrint().c_str(), 1.0f / float(trackingConfidence));
-							}
+							UWARN("Pose retrieve doesn't have same stamp (%ld) than grabbed image (%ld)", pose.timestamp, timestamp);
 						}
-						else
+#endif
+
+						//transform from:
+						// x->right, y->down, z->forward
+						//to:
+						// x->forward, y->left, z->up
+						info->odomPose = this->getLocalTransform() * info->odomPose * this->getLocalTransform().inverse();
+						if(force3DoF_)
+						{
+							info->odomPose = info->odomPose.to3DoF();
+						}
+						if (lost_)
+						{
+							info->odomCovariance = cv::Mat::eye(6, 6, CV_64FC1) * 9999.0f; // don't know transform with previous pose
+							lost_ = false;
+							UDEBUG("Init %s (var=%f)", info->odomPose.prettyPrint().c_str(), 9999.0f);
+						}
+						else if(trackingConfidence==0)
 						{
 							info->odomCovariance = cv::Mat::eye(6, 6, CV_64FC1) * 9999.0f; // lost
 							lost_ = true;
 							UWARN("ZED lost! (trackingConfidence=%d)", trackingConfidence);
+						}
+						else
+						{
+							info->odomCovariance = cv::Mat::eye(6, 6, CV_64FC1) * 1.0f / float(trackingConfidence);
+							UDEBUG("Run %s (var=%f)", info->odomPose.prettyPrint().c_str(), 1.0f / float(trackingConfidence));
 						}
 					}
 					else
@@ -791,6 +884,11 @@ SensorData CameraStereoZed::captureImage(CameraInfo * info)
 	UERROR("CameraStereoZED: RTAB-Map is not built with ZED sdk support!");
 #endif
 	return data;
+}
+
+void CameraStereoZed::postInterIMUPublic(const IMU & imu, double stamp)
+{
+	postInterIMU(imu, stamp);
 }
 
 } // namespace rtabmap

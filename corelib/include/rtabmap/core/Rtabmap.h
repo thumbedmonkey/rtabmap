@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef RTABMAP_H_
 #define RTABMAP_H_
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
+#include "rtabmap/core/rtabmap_core_export.h" // DLL export/import defines
 
 #include "rtabmap/core/Parameters.h"
 #include "rtabmap/core/SensorData.h"
@@ -49,8 +49,9 @@ class Memory;
 class BayesFilter;
 class Signature;
 class Optimizer;
+class PythonInterface;
 
-class RTABMAP_EXP Rtabmap
+class RTABMAP_CORE_EXPORT Rtabmap
 {
 public:
 	enum VhStrategy {kVhNone, kVhEpipolar, kVhUndef};
@@ -150,6 +151,8 @@ public:
 
 	float getTimeThreshold() const {return _maxTimeAllowed;} // in ms
 	void setTimeThreshold(float maxTimeAllowed); // in ms
+	int getMemoryThreshold() const {return _maxMemoryAllowed;} // in nodes
+	void setMemoryThreshold(int maxMemoryAllowed); // in nodes
 
 	void setInitialPose(const Transform & initialPose);
 	int triggerNewMap();
@@ -179,12 +182,13 @@ public:
 	void deleteLastLocation();
 	void setOptimizedPoses(const std::map<int, Transform> & poses, const std::multimap<int, Link> & constraints);
 	Signature getSignatureCopy(int id, bool images, bool scan, bool userData, bool occupancyGrid, bool withWords, bool withGlobalDescriptors) const;
-	RTABMAP_DEPRECATED(
+	// Use getGraph() instead with withImages=true, withScan=true, withUserData=true and withGrid=true.
+	RTABMAP_DEPRECATED
 		void get3DMap(std::map<int, Signature> & signatures,
 				std::map<int, Transform> & poses,
 				std::multimap<int, Link> & constraints,
 				bool optimized,
-				bool global) const, "Use getGraph() instead with withImages=true, withScan=true, withUserData=true and withGrid=true.");
+				bool global) const;
 	void getGraph(std::map<int, Transform> & poses,
 			std::multimap<int, Link> & constraints,
 			bool optimized,
@@ -196,8 +200,8 @@ public:
 			bool withGrid = false,
 			bool withWords = true,
 			bool withGlobalDescriptors = true) const;
-	std::map<int, Transform> getNodesInRadius(const Transform & pose, float radius); // If radius=0, RGBD/LocalRadius is used. Can return landmarks.
-	std::map<int, Transform> getNodesInRadius(int nodeId, float radius); // If nodeId==0, return poses around latest node. If radius=0, RGBD/LocalRadius is used. Can return landmarks and use landmark id (negative) as request.
+	std::map<int, Transform> getNodesInRadius(const Transform & pose, float radius, int k=0, std::map<int, float> * distsSqr=0); // If radius=0 and k=0, RGBD/LocalRadius is used. Can return landmarks.
+	std::map<int, Transform> getNodesInRadius(int nodeId, float radius, int k=0, std::map<int, float> * distsSqr=0); // If nodeId==0, return poses around latest node. If radius=0 and k=0, RGBD/LocalRadius is used. Can return landmarks and use landmark id (negative) as request.
 	int detectMoreLoopClosures(
 			float clusterRadiusMax = 0.5f,
 			float clusterAngle = M_PI/6.0f,
@@ -222,6 +226,7 @@ public:
 	int refineLinks();
 	bool addLink(const Link & link);
 	cv::Mat getInformation(const cv::Mat & covariance) const;
+	void addNodesToRepublish(const std::vector<int> & ids);
 
 	int getPathStatus() const {return _pathStatus;} // -1=failed 0=idle/executing 1=success
 	void clearPath(int status); // -1=failed 0=idle/executing 1=success
@@ -279,10 +284,13 @@ private:
 	unsigned int _maxMemoryAllowed; // signatures count in WM
 	float _loopThr;
 	float _loopRatio;
+	float _aggressiveLoopThr;
+	int _virtualPlaceLikelihoodRatio;
 	float _maxLoopClosureDistance;
 	bool _verifyLoopClosureHypothesis;
 	unsigned int _maxRetrieved;
 	unsigned int _maxLocalRetrieved;
+	unsigned int _maxRepublished;
 	bool _rawDataKept;
 	bool _statisticLogsBufferedInRAM;
 	bool _statisticLogged;
@@ -307,6 +315,7 @@ private:
 	bool _proximityRawPosesUsed;
 	float _proximityAngle;
 	bool _proximityOdomGuess;
+	double _proximityMergedScanCovFactor;
 	std::string _databasePath;
 	bool _optimizeFromGraphEnd;
 	float _optimizationMaxError;
@@ -317,11 +326,16 @@ private:
 	int _pathStuckIterations;
 	float _pathLinearVelocity;
 	float _pathAngularVelocity;
+	bool _forceOdom3doF;
 	bool _restartAtOrigin;
 	bool _loopCovLimited;
 	bool _loopGPS;
 	int _maxOdomCacheSize;
+	bool _localizationSmoothing;
+	double _localizationPriorInf;
 	bool _createGlobalScanMap;
+	float _markerPriorsLinearVariance;
+	float _markerPriorsAngularVariance;
 
 	std::pair<int, float> _loopClosureHypothesis;
 	std::pair<int, float> _highestHypothesis;
@@ -355,14 +369,16 @@ private:
 	Transform _mapCorrectionBackup; // used in localization mode when odom is lost
 	Transform _lastLocalizationPose; // Corrected odometry pose. In mapping mode, this corresponds to last pose return by getLocalOptimizedPoses().
 	int _lastLocalizationNodeId; // for localization mode
+	cv::Mat _localizationCovariance;
 	std::map<int, std::pair<cv::Point3d, Transform> > _gpsGeocentricCache;
 	bool _currentSessionHasGPS;
 	LaserScan _globalScanMap;
 	std::map<int, Transform> _globalScanMapPoses;
 	std::map<int, Transform> _odomCachePoses;       // used in localization mode to reject loop closures
 	std::multimap<int, Link> _odomCacheConstraints; // used in localization mode to reject loop closures
-	std::map<int, Transform> _odomCacheAddLink; // used in localization mode when adding external link
-	std::vector<float> _odomCorrectionAcc;
+	std::map<int, Transform> _markerPriors;
+
+	std::set<int> _nodesToRepublish;
 
 	// Planning stuff
 	int _pathStatus;
@@ -373,6 +389,10 @@ private:
 	Transform _pathTransformToGoal;
 	int _pathStuckCount;
 	float _pathStuckDistance;
+
+#ifdef RTABMAP_PYTHON
+	PythonInterface * _python;
+#endif
 
 };
 

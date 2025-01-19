@@ -170,7 +170,7 @@ void StatItem::setupUi(QGridLayout * grid)
 		layout->addWidget(_value);
 		layout->addWidget(_unit);
 		layout->addStretch();
-		layout->setMargin(0);
+		layout->setContentsMargins(0,0,0,0);
 	}
 }
 
@@ -220,7 +220,7 @@ StatsToolBox::StatsToolBox(QWidget * parent) :
 	//Statistics in the GUI (for plotting)
 	_statBox = new QToolBox(this);
 	this->setLayout(new QVBoxLayout());
-	this->layout()->setMargin(0);
+	this->layout()->setContentsMargins(0,0,0,0);
 	this->layout()->addWidget(_statBox);
 	_statBox->layout()->setSpacing(0);
 	_plotMenu = new QMenu(this);
@@ -528,15 +528,18 @@ void StatsToolBox::clear()
 			plots[0]->clearData();
 		}
 		else
-		{
-			UERROR("");
-		}
-	}
-	QList<StatItem*> items = _statBox->currentWidget()->findChildren<StatItem*>();
-	for (int i = 0; i<items.size(); ++i)
-	{
-		items[i]->clearCache();
-	}
+        {
+            UERROR("");
+        }
+    }
+    if(_statBox->currentWidget())
+    {
+        QList<StatItem*> items = _statBox->currentWidget()->findChildren<StatItem*>();
+        for (int i = 0; i<items.size(); ++i)
+        {
+            items[i]->clearCache();
+        }
+    }
 }
 
 void StatsToolBox::contextMenuEvent(QContextMenuEvent * event)
@@ -567,7 +570,7 @@ void StatsToolBox::contextMenuEvent(QContextMenuEvent * event)
 		}
 	}
 
-	if(!plotName.isEmpty())
+	if(!plotName.isEmpty() && _statBox->currentWidget())
 	{
 		QList<StatItem*> items = _statBox->currentWidget()->findChildren<StatItem*>();
 		for(int i=0; i<items.size(); ++i)
@@ -581,10 +584,11 @@ void StatsToolBox::contextMenuEvent(QContextMenuEvent * event)
 	}
 }
 
-void StatsToolBox::getFiguresSetup(QList<int> & curvesPerFigure, QStringList & curveNames)
+void StatsToolBox::getFiguresSetup(QList<int> & curvesPerFigure, QStringList & curveNames, QStringList & curveThresholds)
 {
 	curvesPerFigure.clear();
 	curveNames.clear();
+	curveThresholds.clear();
 	for(QMap<QString, QWidget*>::iterator i=_figures.begin(); i!=_figures.end(); ++i)
 	{
 		QList<UPlot *> plots = i.value()->findChildren<UPlot *>();
@@ -593,6 +597,10 @@ void StatsToolBox::getFiguresSetup(QList<int> & curvesPerFigure, QStringList & c
 			QStringList names = plots[0]->curveNames();
 			curvesPerFigure.append(names.size());
 			curveNames.append(names);
+			for(int j=0; j<names.size(); ++j)
+			{
+				curveThresholds.append(plots[0]->isThreshold(names[j])?QString::number(plots[0]->getThresholdValue(names[j])):"NA");
+			}
 		}
 		else
 		{
@@ -625,6 +633,22 @@ void StatsToolBox::addCurve(const QString & name, bool newFigure, bool cacheOn)
 		ULOGGER_ERROR("Not supposed to be here...");
 	}
 }
+void StatsToolBox::addThreshold(const QString & name, qreal value)
+{
+	QString plotName = _plotMenu->actions().last()->text();
+	QWidget * fig = _figures.value(plotName, (QWidget*)0);
+	if(fig)
+	{
+		UPlot * plot = fig->findChild<UPlot *>(plotName);
+		if(plot)
+			plot->addThreshold(name, value);
+	}
+	else
+	{
+		UERROR("There are no figures, cannot add threshold \"%s\"", name.toStdString().c_str());
+	}
+}
+
 
 void StatsToolBox::setWorkingDirectory(const QString & workingDirectory)
 {

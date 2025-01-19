@@ -40,7 +40,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "util.h"
 #include "ProgressionStatus.h"
 
+#include <rtabmap/core/SensorCaptureThread.h>
 #include <rtabmap/core/RtabmapThread.h>
+#include <rtabmap/core/SensorEvent.h>
 #include <rtabmap/utilite/UEventsHandler.h>
 #include <boost/thread/mutex.hpp>
 #include <pcl/pcl_base.h>
@@ -68,14 +70,15 @@ class RTABMapApp : public UEventsHandler {
                                                     int,
                                                     float, float, float, float,
                                                     int, int,
-                                                    float, float, float, float, float, float));
+                                                    float, float, float, float, float, float),
+                           void(*cameraInfoCallback)(void *, int, const char*, const char*));
     
 #endif
   ~RTABMapApp();
 
   void setScreenRotation(int displayRotation, int cameraRotation);
 
-  int openDatabase(const std::string & databasePath, bool databaseInMemory, bool optimize, const std::string & databaseSource=std::string());
+  int openDatabase(const std::string & databasePath, bool databaseInMemory, bool optimize, bool clearDatabase);
 
   bool isBuiltWith(int cameraDriver) const;
 #ifdef __ANDROID__
@@ -136,6 +139,7 @@ class RTABMapApp : public UEventsHandler {
   void setSmoothing(bool enabled);
   void setDepthFromMotion(bool enabled);
   void setAppendMode(bool enabled);
+  void setUpstreamRelocalizationAccThr(float value);
   void setDataRecorderMode(bool enabled);
   void setMaxCloudDepth(float value);
   void setMinCloudDepth(float value);
@@ -148,11 +152,13 @@ class RTABMapApp : public UEventsHandler {
   void setRenderingTextureDecimation(int value);
   void setBackgroundColor(float gray);
   void setDepthConfidence(int value);
+  void setExportPointCloudFormat(const std::string & format);
   int setMappingParameter(const std::string & key, const std::string & value);
   void setGPS(const rtabmap::GPS & gps);
   void addEnvSensor(int type, float value);
 
   void save(const std::string & databasePath);
+  bool recover(const std::string & from, const std::string & to);
   void cancelProcessing();
   bool exportMesh(
 		  float cloudVoxelSize,
@@ -175,9 +181,6 @@ class RTABMapApp : public UEventsHandler {
   bool writeExportedMesh(const std::string & directory, const std::string & name);
   int postProcessing(int approach);
 
-  void postCameraPoseEvent(
-  		float x, float y, float z, float qx, float qy, float qz, float qw, double stamp);
-
   void postOdometryEvent(
 		rtabmap::Transform pose,
 		float rgb_fx, float rgb_fy, float rgb_cx, float rgb_cy,
@@ -190,7 +193,7 @@ class RTABMapApp : public UEventsHandler {
         const void * depth, int depthLen, int depthWidth, int depthHeight, int depthFormat,
         const void * conf, int confLen, int confWidth, int confHeight, int confFormat,
         const float * points, int pointsLen, int pointsChannels,
-		const rtabmap::Transform & viewMatrix, //view matrix
+		rtabmap::Transform viewMatrix, //view matrix
         float p00, float p11, float p02, float p12, float p22, float p32, float p23, // projection matrix
         float t0, float t1, float t2, float t3, float t4, float t5, float t6, float t7); // tex coord
 
@@ -208,6 +211,7 @@ class RTABMapApp : public UEventsHandler {
  private:
   int cameraDriver_;
   rtabmap::CameraMobile * camera_;
+  rtabmap::SensorCaptureThread * sensorCaptureThread_;
   rtabmap::RtabmapThread * rtabmapThread_;
   rtabmap::Rtabmap * rtabmap_;
   rtabmap::LogHandler * logHandler_;
@@ -223,6 +227,7 @@ class RTABMapApp : public UEventsHandler {
   bool cameraColor_;
   bool fullResolution_;
   bool appendMode_;
+  bool useExternalLidar_;
   float maxCloudDepth_;
   float minCloudDepth_;
   int cloudDensityLevel_;
@@ -234,6 +239,8 @@ class RTABMapApp : public UEventsHandler {
   int renderingTextureDecimation_;
   float backgroundColor_;
   int depthConfidence_;
+  float upstreamRelocalizationMaxAcc_;
+  std::string exportPointCloudFormat_;
 
   rtabmap::ParametersMap mappingParameters_;
 
@@ -265,18 +272,19 @@ class RTABMapApp : public UEventsHandler {
   // main_scene_ includes all drawable object for visualizing Tango device's
   // movement and point cloud.
   Scene main_scene_;
+    
+    UTimer fpsTime_;
 
 	std::list<rtabmap::RtabmapEvent*> rtabmapEvents_;
-	std::list<rtabmap::OdometryEvent> odomEvents_;
+	std::list<rtabmap::SensorEvent> sensorEvents_;
 	std::list<rtabmap::Transform> poseEvents_;
-	std::map<double, rtabmap::Transform> poseBuffer_;
 
 	rtabmap::Transform mapToOdom_;
 
 	boost::mutex cameraMutex_;
 	boost::mutex rtabmapMutex_;
 	boost::mutex meshesMutex_;
-	boost::mutex odomMutex_;
+	boost::mutex sensorMutex_;
 	boost::mutex poseMutex_;
 	boost::mutex renderingMutex_;
 
@@ -303,6 +311,7 @@ class RTABMapApp : public UEventsHandler {
                              float, float, float, float,
                              int, int,
                              float, float, float, float, float, float);
+    void(*swiftCameraInfoEventCallback)(void *, int, const char *, const char *);
     
 #endif
 };

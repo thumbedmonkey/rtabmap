@@ -27,15 +27,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
 #include "rtabmap/core/StereoCameraModel.h"
 #include "rtabmap/core/camera/CameraVideo.h"
 
 namespace rtabmap
 {
 
-class RTABMAP_EXP CameraStereoVideo :
+class RTABMAP_CORE_EXPORT CameraStereoVideo :
 	public Camera
 {
 public:
@@ -71,9 +69,10 @@ public:
 	virtual std::string getSerial() const;
 
 	void setResolution(int width, int height) {_width=width, _height=height;}
+	void setFOURCC(const std::string & fourcc) { _fourcc = fourcc; }
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 	cv::VideoCapture capture_;
@@ -88,6 +87,7 @@ private:
 	int usbDevice2_;
 	int _width;
 	int _height;
+	std::string _fourcc;
 };
 
 } // namespace rtabmap

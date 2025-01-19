@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef RTABMAP_STATSTOOLBOX_H_
 #define RTABMAP_STATSTOOLBOX_H_
 
-#include "rtabmap/gui/RtabmapGuiExp.h" // DLL export/import defines
+#include "rtabmap/gui/rtabmap_gui_export.h" // DLL export/import defines
 
 #include <QWidget>
 #include <QtCore/QMap>
@@ -41,7 +41,7 @@ class QToolBox;
 
 namespace rtabmap {
 
-class RTABMAPGUI_EXP StatItem : public QWidget
+class RTABMAP_GUI_EXPORT StatItem : public QWidget
 {
 	Q_OBJECT;
 
@@ -87,7 +87,7 @@ private:
 
 
 
-class RTABMAPGUI_EXP StatsToolBox : public QWidget
+class RTABMAP_GUI_EXPORT StatsToolBox : public QWidget
 {
 	Q_OBJECT;
 
@@ -95,8 +95,9 @@ public:
 	StatsToolBox(QWidget * parent);
 	virtual ~StatsToolBox();
 
-	void getFiguresSetup(QList<int> & curvesPerFigure, QStringList & curveNames);
+	void getFiguresSetup(QList<int> & curvesPerFigure, QStringList & curveNames, QStringList & curveThresholds);
 	void addCurve(const QString & name, bool newFigure = true, bool cacheOn = false);
+	void addThreshold(const QString & name, qreal value); // Add to latest figure
 	void setWorkingDirectory(const QString & workingDirectory);
 	void setNewFigureMaxItems(int value) {_newFigureMaxItems = value;}
 	void closeFigures();

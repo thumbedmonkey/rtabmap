@@ -27,8 +27,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
 #include "rtabmap/core/Camera.h"
 #include "rtabmap/core/Version.h"
 
@@ -40,7 +38,7 @@ class Camera;
 namespace rtabmap
 {
 
-class RTABMAP_EXP CameraStereoFlyCapture2 :
+class RTABMAP_CORE_EXPORT CameraStereoFlyCapture2 :
 	public Camera
 {
 public:
@@ -55,7 +53,7 @@ public:
 	virtual std::string getSerial() const;
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 #ifdef RTABMAP_FLYCAPTURE2

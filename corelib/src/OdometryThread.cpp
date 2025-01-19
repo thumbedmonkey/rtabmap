@@ -25,11 +25,11 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <rtabmap/core/SensorEvent.h>
 #include "rtabmap/core/OdometryThread.h"
 #include "rtabmap/core/Odometry.h"
 #include "rtabmap/core/odometry/OdometryMono.h"
 #include "rtabmap/core/OdometryInfo.h"
-#include "rtabmap/core/CameraEvent.h"
 #include "rtabmap/core/OdometryEvent.h"
 #include "rtabmap/utilite/ULogger.h"
 
@@ -58,12 +58,12 @@ bool OdometryThread::handleEvent(UEvent * event)
 {
 	if(this->isRunning())
 	{
-		if(event->getClassName().compare("CameraEvent") == 0)
+		if(event->getClassName().compare("SensorEvent") == 0)
 		{
-			CameraEvent * cameraEvent = (CameraEvent*)event;
-			if(cameraEvent->getCode() == CameraEvent::kCodeData)
+			SensorEvent * sensorEvent = (SensorEvent*)event;
+			if(sensorEvent->getCode() == SensorEvent::kCodeData)
 			{
-				this->addData(cameraEvent->data());
+				this->addData(sensorEvent->data());
 			}
 		}
 		else if(event->getClassName().compare("IMUEvent") == 0)
@@ -134,7 +134,7 @@ void OdometryThread::addData(const SensorData & data)
 	{
 		if(dynamic_cast<OdometryMono*>(_odometry) == 0)
 		{
-			if((data.imageRaw().empty() || data.depthOrRightRaw().empty() || (data.cameraModels().size()==0 && !data.stereoCameraModel().isValidForProjection())) &&
+			if((data.imageRaw().empty() || data.depthOrRightRaw().empty() || (data.cameraModels().empty() && data.stereoCameraModels().empty())) &&
 					data.laserScanRaw().empty())
 			{
 				ULOGGER_ERROR("Missing some information (images/scans empty or missing calibration)!?");
@@ -144,7 +144,7 @@ void OdometryThread::addData(const SensorData & data)
 		else
 		{
 			// Mono can accept RGB only
-			if(data.imageRaw().empty() || (data.cameraModels().size()==0 && !data.stereoCameraModel().isValidForProjection()))
+			if(data.imageRaw().empty() || (data.cameraModels().empty() && data.stereoCameraModels().empty()))
 			{
 				ULOGGER_ERROR("Missing some information (image empty or missing calibration)!?");
 				return;

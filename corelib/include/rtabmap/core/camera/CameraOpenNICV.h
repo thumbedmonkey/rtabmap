@@ -27,15 +27,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
 #include "rtabmap/core/Camera.h"
 #include "rtabmap/core/Version.h"
 
 namespace rtabmap
 {
 
-class RTABMAP_EXP CameraOpenNICV :
+class RTABMAP_CORE_EXPORT CameraOpenNICV :
 	public Camera
 {
 
@@ -53,7 +51,7 @@ public:
 	virtual std::string getSerial() const {return "";} // unknown with OpenCV
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 	bool _asus;

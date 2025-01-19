@@ -28,14 +28,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef STEREO_H_
 #define STEREO_H_
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
+#include "rtabmap/core/rtabmap_core_export.h" // DLL export/import defines
 
 #include <rtabmap/core/Parameters.h>
 #include <opencv2/core/core.hpp>
 
 namespace rtabmap {
 
-class RTABMAP_EXP Stereo {
+class RTABMAP_CORE_EXPORT Stereo {
 public:
 	static Stereo * create(const ParametersMap & parameters = ParametersMap());
 
@@ -49,6 +49,13 @@ public:
 			const cv::Mat & rightImage,
 			const std::vector<cv::Point2f> & leftCorners,
 			std::vector<unsigned char> & status) const;
+#ifdef HAVE_OPENCV_CUDEV
+	virtual std::vector<cv::Point2f> computeCorrespondences(
+			const cv::cuda::GpuMat & leftImage,
+			const cv::cuda::GpuMat & rightImage,
+			const std::vector<cv::Point2f> & leftCorners,
+			std::vector<unsigned char> & status) const;
+#endif
 
 	cv::Size winSize() const {return cv::Size(winWidth_, winHeight_);}
 	int iterations() const   {return iterations_;}
@@ -56,6 +63,7 @@ public:
 	float minDisparity() const {return minDisparity_;}
 	float maxDisparity() const {return maxDisparity_;}
 	bool winSSD() const      {return winSSD_;}
+	virtual bool isGpuEnabled() const {return false;}
 
 private:
 	int winWidth_;
@@ -67,7 +75,7 @@ private:
 	bool winSSD_;
 };
 
-class RTABMAP_EXP StereoOpticalFlow : public Stereo {
+class RTABMAP_CORE_EXPORT StereoOpticalFlow : public Stereo {
 public:
 	StereoOpticalFlow(const ParametersMap & parameters = ParametersMap());
 	virtual ~StereoOpticalFlow() {}
@@ -78,11 +86,27 @@ public:
 			const cv::Mat & rightImage,
 			const std::vector<cv::Point2f> & leftCorners,
 			std::vector<unsigned char> & status) const;
+	
+#ifdef HAVE_OPENCV_CUDEV
+	virtual std::vector<cv::Point2f> computeCorrespondences(
+			const cv::cuda::GpuMat & leftImage,
+			const cv::cuda::GpuMat & rightImage,
+			const std::vector<cv::Point2f> & leftCorners,
+			std::vector<unsigned char> & status) const;
+#endif
 
 	float epsilon() const {return epsilon_;}
+	virtual bool isGpuEnabled() const;
+
+private:
+	void updateStatus(
+		const std::vector<cv::Point2f> & leftCorners,
+		const std::vector<cv::Point2f> & rightCorners,
+		std::vector<unsigned char> & status) const;
 
 private:
 	float epsilon_;
+	bool gpu_;
 };
 
 } /* namespace rtabmap */

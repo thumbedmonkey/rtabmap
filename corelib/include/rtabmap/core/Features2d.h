@@ -28,12 +28,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef FEATURES2D_H_
 #define FEATURES2D_H_
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
+#include "rtabmap/core/rtabmap_core_export.h" // DLL export/import defines
 
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/features2d/features2d.hpp>
 #include <list>
+#include <numeric>
 #include "rtabmap/core/Parameters.h"
 #include "rtabmap/core/SensorData.h"
 
@@ -45,6 +46,7 @@ namespace gpu {
 	class SURF_GPU;
 	class ORB_GPU;
 	class FAST_GPU;
+	class GoodFeaturesToTrackDetector_GPU;
 }
 }
 typedef cv::SIFT CV_SIFT;
@@ -57,13 +59,14 @@ typedef cv::BRISK CV_BRISK;
 typedef cv::gpu::SURF_GPU CV_SURF_GPU;
 typedef cv::gpu::ORB_GPU CV_ORB_GPU;
 typedef cv::gpu::FAST_GPU CV_FAST_GPU;
+typedef cv::gpu::GoodFeaturesToTrackDetector_GPU CV_GFTT_GPU;
 #else
 namespace cv{
 namespace xfeatures2d {
 class FREAK;
 class DAISY;
 class BriefDescriptorExtractor;
-#if CV_MAJOR_VERSION < 3 || (CV_MAJOR_VERSION == 4 && CV_MINOR_VERSION <= 3) || (CV_MAJOR_VERSION == 3 && (CV_MINOR_VERSION < 4 || (CV_MINOR_VERSION==4 && CV_SUBMINOR_VERSION<11)))
+#if (CV_MAJOR_VERSION == 4 && CV_MINOR_VERSION <= 3) || (CV_MAJOR_VERSION == 3 && (CV_MINOR_VERSION < 4 || (CV_MINOR_VERSION==4 && CV_SUBMINOR_VERSION<11)))
 class SIFT;
 #endif
 class SURF;
@@ -72,9 +75,10 @@ namespace cuda {
 class FastFeatureDetector;
 class ORB;
 class SURF_CUDA;
+class CornersDetector;
 }
 }
-#if CV_MAJOR_VERSION < 3 || (CV_MAJOR_VERSION == 4 && CV_MINOR_VERSION <= 3) || (CV_MAJOR_VERSION == 3 && (CV_MINOR_VERSION < 4 || (CV_MINOR_VERSION==4 && CV_SUBMINOR_VERSION<11)))
+#if (CV_MAJOR_VERSION == 4 && CV_MINOR_VERSION <= 3) || (CV_MAJOR_VERSION == 3 && (CV_MINOR_VERSION < 4 || (CV_MINOR_VERSION==4 && CV_SUBMINOR_VERSION<11)))
 typedef cv::xfeatures2d::SIFT CV_SIFT;
 #else
 typedef cv::SIFT CV_SIFT; // SIFT is back in features2d since 4.4.0 / 3.4.11
@@ -90,7 +94,11 @@ typedef cv::ORB CV_ORB;
 typedef cv::cuda::SURF_CUDA CV_SURF_GPU;
 typedef cv::cuda::ORB CV_ORB_GPU;
 typedef cv::cuda::FastFeatureDetector CV_FAST_GPU;
+typedef cv::cuda::CornersDetector CV_GFTT_GPU;
 #endif
+
+// CudaSift fork: https://github.com/matlabbe/CudaSift
+class SiftData;
 
 namespace rtabmap {
 
@@ -103,7 +111,7 @@ class CV_ORB;
 #endif
 
 // Feature2D
-class RTABMAP_EXP Feature2D {
+class RTABMAP_CORE_EXPORT Feature2D {
 public:
 	enum Type {kFeatureUndef=-1,
 		kFeatureSurf=0,
@@ -192,16 +200,17 @@ public:
 			const cv::Mat & disparity,
 			float minDisparity);
 
-	static void limitKeypoints(std::vector<cv::KeyPoint> & keypoints, int maxKeypoints);
-	static void limitKeypoints(std::vector<cv::KeyPoint> & keypoints, cv::Mat & descriptors, int maxKeypoints);
-	static void limitKeypoints(std::vector<cv::KeyPoint> & keypoints, std::vector<cv::Point3f> & keypoints3D, cv::Mat & descriptors, int maxKeypoints);
-	static void limitKeypoints(const std::vector<cv::KeyPoint> & keypoints, std::vector<bool> & inliers, int maxKeypoints);
-	static void limitKeypoints(const std::vector<cv::KeyPoint> & keypoints, std::vector<bool> & inliers, int maxKeypoints, const cv::Size & imageSize, int gridRows, int gridCols);
+	static void limitKeypoints(std::vector<cv::KeyPoint> & keypoints, int maxKeypoints, const cv::Size & imageSize = cv::Size(), bool ssc = false);
+	static void limitKeypoints(std::vector<cv::KeyPoint> & keypoints, cv::Mat & descriptors, int maxKeypoints, const cv::Size & imageSize = cv::Size(), bool ssc = false);
+	static void limitKeypoints(std::vector<cv::KeyPoint> & keypoints, std::vector<cv::Point3f> & keypoints3D, cv::Mat & descriptors, int maxKeypoints, const cv::Size & imageSize = cv::Size(), bool ssc = false);
+	static void limitKeypoints(const std::vector<cv::KeyPoint> & keypoints, std::vector<bool> & inliers, int maxKeypoints, const cv::Size & imageSize = cv::Size(), bool ssc = false);
+	static void limitKeypoints(const std::vector<cv::KeyPoint> & keypoints, std::vector<bool> & inliers, int maxKeypoints, const cv::Size & imageSize, int gridRows, int gridCols, bool ssc = false);
 
 	static cv::Rect computeRoi(const cv::Mat & image, const std::string & roiRatios);
 	static cv::Rect computeRoi(const cv::Mat & image, const std::vector<float> & roiRatios);
 
 	int getMaxFeatures() const {return maxFeatures_;}
+	bool getSSC() const {return SSC_;}
 	float getMinDepth() const {return _minDepth;}
 	float getMaxDepth() const {return _maxDepth;}
 	int getGridRows() const {return gridRows_;}
@@ -234,6 +243,7 @@ private:
 private:
 	ParametersMap parameters_;
 	int maxFeatures_;
+	bool SSC_;
 	float _maxDepth; // 0=inf
 	float _minDepth;
 	std::vector<float> _roiRatios; // size 4
@@ -247,7 +257,7 @@ private:
 };
 
 //SURF
-class RTABMAP_EXP SURF : public Feature2D
+class RTABMAP_CORE_EXPORT SURF : public Feature2D
 {
 public:
 	SURF(const ParametersMap & parameters = ParametersMap());
@@ -274,7 +284,7 @@ private:
 };
 
 //SIFT
-class RTABMAP_EXP SIFT : public Feature2D
+class RTABMAP_CORE_EXPORT SIFT : public Feature2D
 {
 public:
 	SIFT(const ParametersMap & parameters = ParametersMap());
@@ -292,13 +302,22 @@ private:
 	double contrastThreshold_;
 	double edgeThreshold_;
 	double sigma_;
+	bool preciseUpscale_;
 	bool rootSIFT_;
+	bool gpu_;
+	float guaussianThreshold_;
+	bool upscale_;
 
-	cv::Ptr<CV_SIFT> _sift;
+	cv::Ptr<CV_SIFT> sift_;
+	SiftData * cudaSiftData_;
+	float * cudaSiftMemory_;
+	cv::Size cudaSiftMemorySize_;
+	cv::Mat cudaSiftDescriptors_;
+	bool cudaSiftUpscaling_;
 };
 
 //ORB
-class RTABMAP_EXP ORB : public Feature2D
+class RTABMAP_CORE_EXPORT ORB : public Feature2D
 {
 public:
 	ORB(const ParametersMap & parameters = ParametersMap());
@@ -329,7 +348,7 @@ private:
 };
 
 //FAST
-class RTABMAP_EXP FAST : public Feature2D
+class RTABMAP_CORE_EXPORT FAST : public Feature2D
 {
 public:
 	FAST(const ParametersMap & parameters = ParametersMap());
@@ -365,7 +384,7 @@ private:
 };
 
 //FAST_BRIEF
-class RTABMAP_EXP FAST_BRIEF : public FAST
+class RTABMAP_CORE_EXPORT FAST_BRIEF : public FAST
 {
 public:
 	FAST_BRIEF(const ParametersMap & parameters = ParametersMap());
@@ -384,7 +403,7 @@ private:
 };
 
 //FAST_FREAK
-class RTABMAP_EXP FAST_FREAK : public FAST
+class RTABMAP_CORE_EXPORT FAST_FREAK : public FAST
 {
 public:
 	FAST_FREAK(const ParametersMap & parameters = ParametersMap());
@@ -406,7 +425,7 @@ private:
 };
 
 //GFTT
-class RTABMAP_EXP GFTT : public Feature2D
+class RTABMAP_CORE_EXPORT GFTT : public Feature2D
 {
 public:
 	GFTT(const ParametersMap & parameters = ParametersMap());
@@ -423,12 +442,14 @@ private:
 	int _blockSize;
 	bool _useHarrisDetector;
 	double _k;
+	bool _gpu;
 
 	cv::Ptr<CV_GFTT> _gftt;
+	cv::Ptr<CV_GFTT_GPU> _gpuGftt;
 };
 
 //GFTT_BRIEF
-class RTABMAP_EXP GFTT_BRIEF : public GFTT
+class RTABMAP_CORE_EXPORT GFTT_BRIEF : public GFTT
 {
 public:
 	GFTT_BRIEF(const ParametersMap & parameters = ParametersMap());
@@ -447,7 +468,7 @@ private:
 };
 
 //GFTT_FREAK
-class RTABMAP_EXP GFTT_FREAK : public GFTT
+class RTABMAP_CORE_EXPORT GFTT_FREAK : public GFTT
 {
 public:
 	GFTT_FREAK(const ParametersMap & parameters = ParametersMap());
@@ -469,7 +490,7 @@ private:
 };
 
 //SURF_FREAK
-class RTABMAP_EXP SURF_FREAK : public SURF
+class RTABMAP_CORE_EXPORT SURF_FREAK : public SURF
 {
 public:
 	SURF_FREAK(const ParametersMap & parameters = ParametersMap());
@@ -491,7 +512,7 @@ private:
 };
 
 //GFTT_ORB
-class RTABMAP_EXP GFTT_ORB : public GFTT
+class RTABMAP_CORE_EXPORT GFTT_ORB : public GFTT
 {
 public:
 	GFTT_ORB(const ParametersMap & parameters = ParametersMap());
@@ -508,7 +529,7 @@ private:
 };
 
 //BRISK
-class RTABMAP_EXP BRISK : public Feature2D
+class RTABMAP_CORE_EXPORT BRISK : public Feature2D
 {
 public:
 	BRISK(const ParametersMap & parameters = ParametersMap());
@@ -530,7 +551,7 @@ private:
 };
 
 //KAZE
-class RTABMAP_EXP KAZE : public Feature2D
+class RTABMAP_CORE_EXPORT KAZE : public Feature2D
 {
 public:
 	KAZE(const ParametersMap & parameters = ParametersMap());
@@ -557,7 +578,7 @@ private:
 };
 
 //ORB OCTREE
-class RTABMAP_EXP ORBOctree : public Feature2D
+class RTABMAP_CORE_EXPORT ORBOctree : public Feature2D
 {
 public:
 	ORBOctree(const ParametersMap & parameters = ParametersMap());
@@ -583,7 +604,7 @@ private:
 };
 
 //SuperPointTorch
-class RTABMAP_EXP SuperPointTorch : public Feature2D
+class RTABMAP_CORE_EXPORT SuperPointTorch : public Feature2D
 {
 public:
 	SuperPointTorch(const ParametersMap & parameters = ParametersMap());
@@ -606,7 +627,7 @@ private:
 };
 
 //GFTT_DAISY
-class RTABMAP_EXP GFTT_DAISY : public GFTT
+class RTABMAP_CORE_EXPORT GFTT_DAISY : public GFTT
 {
 public:
 	GFTT_DAISY(const ParametersMap & parameters = ParametersMap());
@@ -630,7 +651,7 @@ private:
 };
 
 //SURF_DAISY
-class RTABMAP_EXP SURF_DAISY : public SURF
+class RTABMAP_CORE_EXPORT SURF_DAISY : public SURF
 {
 public:
 	SURF_DAISY(const ParametersMap & parameters = ParametersMap());

@@ -42,6 +42,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <rtabmap/utilite/UFile.h>
 #include <rtabmap/utilite/UStl.h>
 #include <rtabmap/utilite/UTimer.h>
+#ifdef RTABMAP_PYTHON
+#include <rtabmap/core/PythonInterface.h>
+#endif
 #include <fstream>
 #include <string>
 #include <QApplication>
@@ -168,6 +171,10 @@ int main(int argc, char * argv[])
 	}
 	printf("  --from_depth  = \"%s\"\n", fromDepthPath.c_str());
 	printf("  --to_depth    = \"%s\"\n", toDepthPath.c_str());
+
+#ifdef RTABMAP_PYTHON
+	rtabmap::PythonInterface pythonInterface;
+#endif
 
 	ParametersMap parameters = Parameters::parseArguments(argc, argv);
 	parameters.insert(ParametersPair(Parameters::kRegRepeatOnce(), "false"));
@@ -328,13 +335,13 @@ int main(int argc, char * argv[])
 		RegistrationInfo info;
 
 
-		// Do it one time before to make sure everything is loaded to get realistic timing.
+		// Do it one time before to make sure everything is loaded to get realistic timing for matching only.
 		reg.computeTransformationMod(dataFrom, dataTo, Transform(), &info);
 
 		UTimer timer;
 		Transform t = reg.computeTransformationMod(dataFrom, dataTo, Transform(), &info);
 		double matchingTime = timer.ticks();
-		printf("Time matching and motion estimation: %fs\n", matchingTime);
+		printf("Time matching and motion estimation (excluding feature detection): %fs\n", matchingTime);
 
 		//////////////////
 		// Visualization

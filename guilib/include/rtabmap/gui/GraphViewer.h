@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef RTABMAP_GRAPHVIEWER_H_
 #define RTABMAP_GRAPHVIEWER_H_
 
-#include "rtabmap/gui/RtabmapGuiExp.h" // DLL export/import defines
+#include "rtabmap/gui/rtabmap_gui_export.h" // DLL export/import defines
 
 #include <QGraphicsView>
 #include <QtCore/QMap>
@@ -37,6 +37,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <rtabmap/core/GPS.h>
 #include <opencv2/opencv.hpp>
 #include <map>
+#include <set>
 #include <vector>
 
 class QGraphicsItem;
@@ -48,7 +49,7 @@ namespace rtabmap {
 class NodeItem;
 class LinkItem;
 
-class RTABMAPGUI_EXP GraphViewer : public QGraphicsView {
+class RTABMAP_GUI_EXPORT GraphViewer : public QGraphicsView {
 
 	Q_OBJECT;
 
@@ -65,7 +66,8 @@ public:
 	void updateGraph(const std::map<int, Transform> & poses,
 					 const std::multimap<int, Link> & constraints,
 					 const std::map<int, int> & mapIds,
-					 const std::map<int, int> & weights = std::map<int, int>());
+					 const std::map<int, int> & weights = std::map<int, int>(),
+					 const std::set<int> & odomCacheIds = std::set<int>());
 	void updateGTGraph(const std::map<int, Transform> & poses);
 	void updateGPSGraph(
 			const std::map<int, Transform> & gpsMapPoses,
@@ -77,6 +79,7 @@ public:
 	void setGlobalPath(const std::vector<std::pair<int, Transform> > & globalPath);
 	void setCurrentGoalID(int id, const Transform & pose = Transform());
 	void setLocalRadius(float radius);
+	void highlightNode(int nodeId, int highlightIndex);
 	void clearGraph();
 	void clearMap();
 	void clearPosterior();
@@ -90,6 +93,7 @@ public:
 	float getNodeRadius() const {return _nodeRadius;}
 	float getLinkWidth() const {return _linkWidth;}
 	const QColor & getNodeColor() const {return _nodeColor;}
+	const QColor & getNodeOdomCacheColor() const {return _nodeOdomCacheColor;}
 	const QColor & getCurrentGoalColor() const {return _currentGoalColor;}
 	const QColor & getNeighborColor() const {return _neighborColor;}
 	const QColor & getGlobalLoopClosureColor() const {return _loopClosureColor;}
@@ -116,8 +120,10 @@ public:
 	bool isLocalPathVisible() const;
 	bool isGtGraphVisible() const;
 	bool isGPSGraphVisible() const;
+	bool isOdomCacheOverlayVisible() const;
 	bool isOrientationENU() const;
 	ViewPlane getViewPlane() const;
+	bool isEnsureFrameVisible() const;
 
 	// setters
 	void setWorkingDirectory(const QString & path);
@@ -125,6 +131,7 @@ public:
 	void setNodeRadius(float radius);
 	void setLinkWidth(float width);
 	void setNodeColor(const QColor & color);
+	void setNodeOdomCacheColor(const QColor & color);
 	void setCurrentGoalColor(const QColor & color);
 	void setNeighborColor(const QColor & color);
 	void setGlobalLoopClosureColor(const QColor & color);
@@ -138,6 +145,7 @@ public:
 	void setGlobalPathColor(const QColor & color);
 	void setGTColor(const QColor & color);
 	void setGPSColor(const QColor & color);
+	void setHighlightColor(const QColor & color, int index);
 	void setIntraSessionLoopColor(const QColor & color);
 	void setInterSessionLoopColor(const QColor & color);
 	void setIntraInterSessionColorsEnabled(bool enabled);
@@ -152,23 +160,30 @@ public:
 	void setLocalPathVisible(bool visible);
 	void setGtGraphVisible(bool visible);
 	void setGPSGraphVisible(bool visible);
+	void setOdomCacheOverlayVisible(bool visible);
 	void setOrientationENU(bool enabled);
 	void setViewPlane(ViewPlane plane);
+	void setEnsureFrameVisible(bool visible);
 
 Q_SIGNALS:
 	void configChanged();
 	void mapShownRequested();
+	void nodeSelected(int);
+	void linkSelected(int, int);
 
 public Q_SLOTS:
 	void restoreDefaults();
 
 protected:
 	virtual void wheelEvent ( QWheelEvent * event );
+	virtual void mouseMoveEvent(QMouseEvent * event);
+	virtual void mousePressEvent(QMouseEvent * event);
 	virtual void contextMenuEvent(QContextMenuEvent * event);
 
 private:
 	QString _workingDirectory;
 	QColor _nodeColor;
+	QColor _nodeOdomCacheColor;
 	QColor _currentGoalColor;
 	QColor _neighborColor;
 	QColor _loopClosureColor;
@@ -201,6 +216,7 @@ private:
 	QMultiMap<int, LinkItem*> _gpsLinkItems;
 	QMultiMap<int, LinkItem*> _localPathLinkItems;
 	QMultiMap<int, LinkItem*> _globalPathLinkItems;
+	QVector<QPair<QColor, NodeItem*> > _highlightedNodes;
 	bool _nodeVisible;
 	float _nodeRadius;
 	float _linkWidth;
@@ -215,10 +231,13 @@ private:
 	QGraphicsItemGroup * _originReferentialYZ;
 	float _gridCellSize;
 	QGraphicsEllipseItem * _localRadius;
+	QGraphicsRectItem * _odomCacheOverlay;
 	float _loopClosureOutlierThr;
 	float _maxLinkLength;
 	bool _orientationENU;
+	bool _mouseTracking;
 	ViewPlane _viewPlane;
+	bool _ensureFrameVisible;
 };
 
 } /* namespace rtabmap */

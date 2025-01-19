@@ -27,8 +27,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
 #include "rtabmap/core/StereoCameraModel.h"
 #include "rtabmap/core/Camera.h"
 #include "rtabmap/core/Version.h"
@@ -46,7 +44,7 @@ namespace rtabmap
 {
 class ZedOCThread;
 
-class RTABMAP_EXP CameraStereoZedOC :
+class RTABMAP_CORE_EXPORT CameraStereoZedOC :
 	public Camera
 {
 public:
@@ -65,7 +63,7 @@ public:
 	virtual std::string getSerial() const;
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 #ifdef RTABMAP_ZEDOC

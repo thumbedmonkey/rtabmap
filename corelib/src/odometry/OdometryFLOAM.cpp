@@ -60,7 +60,7 @@ OdometryFLOAM::OdometryFLOAM(const ParametersMap & parameters) :
 	float scan_period= Parameters::defaultOdomLOAMScanPeriod();
 	float max_dis = Parameters::defaultIcpRangeMax();
 	float min_dis = Parameters::defaultIcpRangeMin();
-	float map_resolution = Parameters::defaultIcpVoxelSize();
+	float map_resolution = Parameters::defaultOdomLOAMResolution();
 	linVar_ = Parameters::defaultOdomLOAMLinVar();
 	angVar_ = Parameters::defaultOdomLOAMAngVar();
 
@@ -68,9 +68,8 @@ OdometryFLOAM::OdometryFLOAM(const ParametersMap & parameters) :
 	Parameters::parse(parameters, Parameters::kOdomLOAMScanPeriod(), scan_period);
 	Parameters::parse(parameters, Parameters::kIcpRangeMax(), max_dis);
 	Parameters::parse(parameters, Parameters::kIcpRangeMin(), min_dis);
-	Parameters::parse(parameters, Parameters::kIcpVoxelSize(), map_resolution);
+	Parameters::parse(parameters, Parameters::kOdomLOAMResolution(), map_resolution);
 
-	UASSERT(scan_period>0.0f);
 	Parameters::parse(parameters, Parameters::kOdomLOAMLinVar(), linVar_);
 	UASSERT(linVar_>0.0f);
 	Parameters::parse(parameters, Parameters::kOdomLOAMAngVar(), angVar_);
@@ -79,7 +78,7 @@ OdometryFLOAM::OdometryFLOAM(const ParametersMap & parameters) :
 	lidar::Lidar lidar_param;
 	lidar_param.setScanPeriod(scan_period);
 	lidar_param.setVerticalAngle(vertical_angle);
-	lidar_param.setLines(sensor==2?64:sensor==1?32:sensor);
+	lidar_param.setLines(sensor==2?64:sensor==1?32:16);
 	lidar_param.setMaxDistance(max_dis<=0?200:max_dis);
 	lidar_param.setMinDistance(min_dis);
 
@@ -114,6 +113,7 @@ Transform OdometryFLOAM::computeTransform(
 	Transform t;
 #ifdef RTABMAP_FLOAM
 	UTimer timer;
+	UTimer timerTotal;
 
 	if(data.laserScanRaw().isEmpty())
 	{
@@ -129,26 +129,36 @@ Transform OdometryFLOAM::computeTransform(
 	cv::Mat covariance = cv::Mat::eye(6,6,CV_64FC1)*9999;
 	if(!lost_)
 	{
-		pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudInPtr = util3d::laserScanToPointCloudI(data.laserScanRaw(), data.laserScanRaw().localTransform());
+		pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudInPtr = util3d::laserScanToPointCloudI(data.laserScanRaw());
+
+		UDEBUG("Scan conversion: %fs", timer.ticks());
 
 		pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud_edge(new pcl::PointCloud<pcl::PointXYZI>());
 		pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud_surf(new pcl::PointCloud<pcl::PointXYZI>());
 
 		laserProcessing_->featureExtraction(laserCloudInPtr,pointcloud_edge,pointcloud_surf);
+		UDEBUG("Feature extraction: %fs", timer.ticks());
+
+		// Put back the laser scan filtered
+		pcl::PointCloud<pcl::PointXYZI>::Ptr pointcloud_filtered(new pcl::PointCloud<pcl::PointXYZI>());
+		*pointcloud_filtered+=*pointcloud_edge;
+		*pointcloud_filtered+=*pointcloud_surf;
+		data.setLaserScan(util3d::laserScanFromPointCloud(*pointcloud_filtered));
 
 		if(this->framesProcessed() == 0){
 			odomEstimation_->initMapWithPoints(pointcloud_edge, pointcloud_surf);
 		}else{
 			odomEstimation_->updatePointsToMap(pointcloud_edge, pointcloud_surf);
 		}
+		UDEBUG("Update: %fs", timer.ticks());
 
 		Transform pose = Transform::fromEigen3d(odomEstimation_->odom);
 
 		if(!pose.isNull())
 		{
 			covariance = cv::Mat::eye(6,6,CV_64FC1);
-			covariance(cv::Range(0,3), cv::Range(0,3)) *= 0.01;
-			covariance(cv::Range(3,6), cv::Range(3,6)) *= 0.01;
+			covariance(cv::Range(0,3), cv::Range(0,3)) *= linVar_;
+			covariance(cv::Range(3,6), cv::Range(3,6)) *= angVar_;
 
 			t = lastPose_.inverse() * pose; // incremental
 			lastPose_ = pose;
@@ -173,7 +183,8 @@ Transform OdometryFLOAM::computeTransform(
 					pcl::PointCloud<pcl::PointXYZI>::Ptr localMap(new pcl::PointCloud<pcl::PointXYZI>());
 					odomEstimation_->getMap(localMap);
 					info->localScanMapSize = localMap->size();
-					info->localScanMap = LaserScan(util3d::laserScanFromPointCloud(*localMap), 0, data.laserScanRaw().rangeMax());
+					info->localScanMap = LaserScan(util3d::laserScanFromPointCloud(*localMap), 0, data.laserScanRaw().rangeMax(), data.laserScanRaw().localTransform());
+					UDEBUG("Fill info data: %fs", timer.ticks());
 				}
 			}
 		}
@@ -183,7 +194,7 @@ Transform OdometryFLOAM::computeTransform(
 			UWARN("FLOAM failed to register the latest scan, odometry should be reset.");
 		}
 	}
-	UINFO("Odom update time = %fs, lost=%s", timer.elapsed(), lost_?"true":"false");
+	UINFO("Odom update time = %fs, lost=%s", timerTotal.elapsed(), lost_?"true":"false");
 
 #else
 	UERROR("RTAB-Map is not built with FLOAM support! Select another odometry approach.");

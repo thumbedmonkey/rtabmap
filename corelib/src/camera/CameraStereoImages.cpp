@@ -156,7 +156,7 @@ std::string CameraStereoImages::getSerial() const
 	return stereoModel_.name();
 }
 
-SensorData CameraStereoImages::captureImage(CameraInfo * info)
+SensorData CameraStereoImages::captureImage(SensorCaptureInfo * info)
 {
 	SensorData data;
 
@@ -166,6 +166,7 @@ SensorData CameraStereoImages::captureImage(CameraInfo * info)
 	{
 		if(camera2_)
 		{
+			camera2_->setBayerMode(this->getBayerMode());
 			right = camera2_->takeImage(info);
 		}
 		else

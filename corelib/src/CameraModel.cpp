@@ -37,7 +37,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace rtabmap {
 
-CameraModel::CameraModel()
+CameraModel::CameraModel() :
+		localTransform_(opticalRotation())
 {
 
 }
@@ -59,7 +60,7 @@ CameraModel::CameraModel(
 		localTransform_(localTransform)
 {
 	UASSERT(K_.empty() || (K_.rows == 3 && K_.cols == 3 && K_.type() == CV_64FC1));
-	UASSERT(D_.empty() || (D_.rows == 1 && (D_.cols == 4 || D_.cols == 5 || D_.cols == 6 || D_.cols == 8) && D_.type() == CV_64FC1));
+	UASSERT(D_.empty() || (D_.rows == 1 && (D_.cols == 4 || D_.cols == 5 || D_.cols == 6 || D_.cols == 8 || D_.cols == 12 || D_.cols == 14) && D_.type() == CV_64FC1));
 	UASSERT(R_.empty() || (R_.rows == 3 && R_.cols == 3 && R_.type() == CV_64FC1));
 	UASSERT(P_.empty() || (P_.rows == 3 && P_.cols == 4 && P_.type() == CV_64FC1));
 }
@@ -155,7 +156,7 @@ CameraModel::CameraModel(
 bool CameraModel::initRectificationMap()
 {
 	UASSERT(imageSize_.height > 0 && imageSize_.width > 0);
-	UASSERT(D_.rows == 1 && (D_.cols == 4 || D_.cols == 5 || D_.cols == 6 || D_.cols == 8));
+	UASSERT(D_.rows == 1 && (D_.cols == 4 || D_.cols == 5 || D_.cols == 6 || D_.cols == 8 || D_.cols == 12 || D_.cols == 14));
 	UASSERT(R_.rows == 3 && R_.cols == 3);
 	UASSERT(P_.rows == 3 && P_.cols == 4);
 	// init rectification map
@@ -278,7 +279,7 @@ bool CameraModel::load(const std::string & filePath)
 				std::vector<double> data;
 				n["data"] >> data;
 				UASSERT(rows*cols == (int)data.size());
-				UASSERT(rows == 1 && (cols == 4 || cols == 5 || cols == 8));
+				UASSERT(rows == 1 && (cols == 4 || cols == 5 || cols == 8 || cols == 12 || cols == 14));
 				D_ = cv::Mat(rows, cols, CV_64FC1, data.data()).clone();
 			}
 			else
@@ -339,6 +340,25 @@ bool CameraModel::load(const std::string & filePath)
 				UWARN("Missing \"projection_matrix\" field in \"%s\"", filePath.c_str());
 			}
 
+			n = fs["local_transform"];
+			if(n.type() != cv::FileNode::NONE)
+			{
+				int rows = (int)n["rows"];
+				int cols = (int)n["cols"];
+				std::vector<float> data;
+				n["data"] >> data;
+				UASSERT(rows*cols == (int)data.size());
+				UASSERT(rows == 3 && cols == 4);
+				localTransform_ = Transform(
+						data[0], data[1], data[2], data[3],
+						data[4], data[5], data[6], data[7],
+						data[8], data[9], data[10], data[11]);
+			}
+			else
+			{
+				UWARN("Missing \"local_transform\" field in \"%s\"", filePath.c_str());
+			}
+
 			fs.release();
 
 			if(isValidForRectification())
@@ -350,7 +370,7 @@ bool CameraModel::load(const std::string & filePath)
 		}
 		catch(const cv::Exception & e)
 		{
-			UERROR("Error reading calibration file \"%s\": %s", filePath.c_str(), e.what());
+			UERROR("Error reading calibration file \"%s\": %s (Make sure the first line of the yaml file is \"%YAML:1.0\")", filePath.c_str(), e.what());
 		}
 	}
 	else
@@ -445,6 +465,15 @@ bool CameraModel::save(const std::string & directory) const
 			fs << "rows" << P_.rows;
 			fs << "cols" << P_.cols;
 			fs << "data" << std::vector<double>((double*)P_.data, ((double*)P_.data)+(P_.rows*P_.cols));
+			fs << "}";
+		}
+
+		if(!localTransform_.isNull())
+		{
+			fs << "local_transform" << "{";
+			fs << "rows" << 3;
+			fs << "cols" << 4;
+			fs << "data" << std::vector<float>((float*)localTransform_.data(), ((float*)localTransform_.data())+12);
 			fs << "}";
 		}
 

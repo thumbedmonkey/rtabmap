@@ -27,8 +27,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
-
 #include "rtabmap/core/CameraModel.h"
 #include "rtabmap/core/Camera.h"
 #include "rtabmap/core/Version.h"
@@ -53,7 +51,7 @@ struct rs2_extrinsics;
 namespace rtabmap
 {
 
-class RTABMAP_EXP CameraRealSense2 :
+class RTABMAP_CORE_EXPORT CameraRealSense2 :
 	public Camera
 {
 public:
@@ -70,7 +68,7 @@ public:
 	virtual bool isCalibrated() const;
 	virtual std::string getSerial() const;
 	virtual bool odomProvided() const;
-	virtual bool getPose(double stamp, Transform & pose, cv::Mat & covariance);
+	virtual bool getPose(double stamp, Transform & pose, cv::Mat & covariance, double maxWaitTime = 0.06);
 
 	// parameters are set during initialization
 	// D400 series
@@ -79,7 +77,7 @@ public:
 	void setResolution(int width, int height, int fps = 30);
 	void setDepthResolution(int width, int height, int fps = 30);
 	void setGlobalTimeSync(bool enabled);
-	void publishInterIMU(bool enabled);
+
 	/**
 	 * Dual mode (D400+T265 or L500+T265)
 	 * @param enabled enable dual mode
@@ -89,7 +87,7 @@ public:
 	void setJsonConfig(const std::string & json);
 	// T265 related parameters
 	void setImagesRectified(bool enabled);
-	void setOdomProvided(bool enabled, bool imageStreamsDisabled=false);
+	void setOdomProvided(bool enabled, bool imageStreamsDisabled=false, bool onlyLeftStream = false);
 
 #ifdef RTABMAP_REALSENSE2
 private:
@@ -107,7 +105,7 @@ private:
 #endif
 
 protected:
-	virtual SensorData captureImage(CameraInfo * info = 0);
+	virtual SensorData captureImage(SensorCaptureInfo * info = 0);
 
 private:
 #ifdef RTABMAP_REALSENSE2
@@ -116,8 +114,6 @@ private:
 	std::string deviceId_;
 	rs2::syncer syncer_;
 	float depth_scale_meters_;
-	rs2_intrinsics depthIntrinsics_;
-	rs2_intrinsics rgbIntrinsics_;
 	cv::Mat depthBuffer_;
 	cv::Mat rgbBuffer_;
 	CameraModel model_;
@@ -138,6 +134,7 @@ private:
 	bool rectifyImages_;
 	bool odometryProvided_;
 	bool odometryImagesDisabled_;
+	bool odometryOnlyLeftStream_;
 	int cameraWidth_;
 	int cameraHeight_;
 	int cameraFps_;
@@ -145,7 +142,6 @@ private:
 	int cameraDepthHeight_;
 	int cameraDepthFps_;
 	bool globalTimeSync_;
-	bool publishInterIMU_;
 	bool dualMode_;
 	Transform dualExtrinsics_;
 	std::string jsonConfig_;

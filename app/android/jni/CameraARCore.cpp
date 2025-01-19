@@ -37,8 +37,8 @@ namespace rtabmap {
 //////////////////////////////
 // CameraARCore
 //////////////////////////////
-CameraARCore::CameraARCore(void* env, void* context, void* activity, bool depthFromMotion, bool smoothing):
-	CameraMobile(smoothing),
+CameraARCore::CameraARCore(void* env, void* context, void* activity, bool depthFromMotion, bool smoothing, float upstreamRelocalizationAccThr):
+	CameraMobile(smoothing, upstreamRelocalizationAccThr),
 	env_(env),
 	context_(context),
 	activity_(activity),
@@ -124,6 +124,8 @@ std::string CameraARCore::getSerial() const
 bool CameraARCore::init(const std::string & calibrationFolder, const std::string & cameraName)
 {
 	close();
+
+	CameraMobile::init(calibrationFolder, cameraName);
 
 	UScopeMutex lock(arSessionMutex_);
 
@@ -272,54 +274,6 @@ void CameraARCore::close()
 	CameraMobile::close();
 }
 
-LaserScan CameraARCore::scanFromPointCloudData(
-		const float * pointCloudData,
-		int points,
-		const Transform & pose,
-		const CameraModel & model,
-		const cv::Mat & rgb,
-		std::vector<cv::KeyPoint> * kpts,
-		std::vector<cv::Point3f> * kpts3D)
-{
-	if(pointCloudData && points>0)
-	{
-		cv::Mat scanData(1, points, CV_32FC4);
-		float * ptr = scanData.ptr<float>();
-		for(unsigned int i=0;i<points; ++i)
-		{
-			cv::Point3f pt(pointCloudData[i*4], pointCloudData[i*4 + 1], pointCloudData[i*4 + 2]);
-			pt = util3d::transformPoint(pt, pose.inverse()*rtabmap_world_T_opengl_world);
-			ptr[i*4] = pt.x;
-			ptr[i*4 + 1] = pt.y;
-			ptr[i*4 + 2] = pt.z;
-
-			//get color from rgb image
-			cv::Point3f org= pt;
-			pt = util3d::transformPoint(pt, opticalRotationInv);
-			int u,v;
-			model.reproject(pt.x, pt.y, pt.z, u, v);
-			unsigned char r=255,g=255,b=255;
-			if(model.inFrame(u, v))
-			{
-				b=rgb.at<cv::Vec3b>(v,u).val[0];
-				g=rgb.at<cv::Vec3b>(v,u).val[1];
-				r=rgb.at<cv::Vec3b>(v,u).val[2];
-				if(kpts)
-					kpts->push_back(cv::KeyPoint(u,v,3));
-				if(kpts3D)
-					kpts3D->push_back(org);
-			}
-			*(int*)&ptr[i*4 + 3] = int(b) | (int(g) << 8) | (int(r) << 16);
-
-			//confidence
-			//*(int*)&ptr[i*4 + 3] = (int(pointCloudData[i*4 + 3] * 255.0f) << 8) | (int(255) << 16);
-
-		}
-		return LaserScan::backwardCompatibility(scanData, 0, 10, rtabmap::Transform::getIdentity());
-	}
-	return LaserScan();
-}
-
 void CameraARCore::setScreenRotationAndSize(ScreenRotation colorCameraToDisplayRotation, int width, int height)
 {
 	CameraMobile::setScreenRotationAndSize(colorCameraToDisplayRotation, width, height);
@@ -334,11 +288,12 @@ void CameraARCore::setScreenRotationAndSize(ScreenRotation colorCameraToDisplayR
 	}
 }
 
-SensorData CameraARCore::captureImage(CameraInfo * info)
+SensorData CameraARCore::updateDataOnRender(Transform & pose)
 {
 	UScopeMutex lock(arSessionMutex_);
 	//LOGI("Capturing image...");
 
+	pose.setNull();
 	SensorData data;
 	if(!arSession_)
 	{
@@ -370,7 +325,7 @@ SensorData CameraARCore::captureImage(CameraInfo * info)
 	if (geometry_changed != 0 || !uvs_initialized_) {
 		ArFrame_transformCoordinates2d(
 				arSession_, arFrame_, AR_COORDINATES_2D_OPENGL_NORMALIZED_DEVICE_COORDINATES,
-				BackgroundRenderer::kNumVertices, BackgroundRenderer_kVertices, AR_COORDINATES_2D_TEXTURE_NORMALIZED,
+				BackgroundRenderer::kNumVertices, BackgroundRenderer_kVerticesDevice, AR_COORDINATES_2D_TEXTURE_NORMALIZED,
 				transformed_uvs_);
 		UASSERT(transformed_uvs_);
 		uvs_initialized_ = true;
@@ -384,16 +339,9 @@ SensorData CameraARCore::captureImage(CameraInfo * info)
 							   /*near=*/0.1f, /*far=*/100.f,
 							   glm::value_ptr(projectionMatrix_));
 
-	// adjust origin
-	if(!getOriginOffset().isNull())
-	{
-		viewMatrix_ = glm::inverse(rtabmap::glmFromTransform(rtabmap::opengl_world_T_rtabmap_world * getOriginOffset() *rtabmap::rtabmap_world_T_opengl_world)*glm::inverse(viewMatrix_));
-	}
-
 	ArTrackingState camera_tracking_state;
 	ArCamera_getTrackingState(arSession_, ar_camera, &camera_tracking_state);
 
-	Transform pose;
 	CameraModel model;
 	if(camera_tracking_state == AR_TRACKING_STATE_TRACKING)
 	{
@@ -401,23 +349,13 @@ SensorData CameraARCore::captureImage(CameraInfo * info)
 		float pose_raw[7];
 		ArCamera_getPose(arSession_, ar_camera, arPose_);
 		ArPose_getPoseRaw(arSession_, arPose_, pose_raw);
-		pose = Transform(pose_raw[4], pose_raw[5], pose_raw[6], pose_raw[0], pose_raw[1], pose_raw[2], pose_raw[3]);
-		pose = rtabmap::rtabmap_world_T_opengl_world * pose * rtabmap::opengl_world_T_rtabmap_world;
+		Transform poseArCore = Transform(pose_raw[4], pose_raw[5], pose_raw[6], pose_raw[0], pose_raw[1], pose_raw[2], pose_raw[3]);
+		pose = rtabmap::rtabmap_world_T_opengl_world * poseArCore * rtabmap::opengl_world_T_rtabmap_world;
 
-		Transform poseArCore = pose;
 		if(pose.isNull())
 		{
 			LOGE("CameraARCore: Pose is null");
-		}
-		else
-		{
-			this->poseReceived(pose);
-			// adjust origin
-			if(!getOriginOffset().isNull())
-			{
-				pose = getOriginOffset() * pose;
-			}
-			info->odomPose = pose;
+			return data;
 		}
 
 		// Get calibration parameters
@@ -520,11 +458,11 @@ SensorData CameraARCore::captureImage(CameraInfo * info)
 							cv::Mat yuv(height+height/2, width, CV_8UC1);
 							memcpy(yuv.data, plane_data, data_length);
 							memcpy(yuv.data+data_length, plane_uv_data, height/2*width);
-							cv::cvtColor(yuv, rgb, CV_YUV2BGR_NV21);
+							cv::cvtColor(yuv, rgb, cv::COLOR_YUV2BGR_NV21);
 						}
 						else
 						{
-							cv::cvtColor(cv::Mat(height+height/2, width, CV_8UC1, (void*)plane_data), rgb, CV_YUV2BGR_NV21);
+							cv::cvtColor(cv::Mat(height+height/2, width, CV_8UC1, (void*)plane_data), rgb, cv::COLOR_YUV2BGR_NV21);
 						}
 
 						std::vector<cv::KeyPoint> kpts;
@@ -541,7 +479,11 @@ SensorData CameraARCore::captureImage(CameraInfo * info)
 #endif
 							if(pointCloudData && points>0)
 							{
-								scan = scanFromPointCloudData(pointCloudData, points, poseArCore, model, rgb, &kpts, &kpts3);
+								cv::Mat pointCloudDataMat(1, points, CV_32FC4, (void *)pointCloudData);
+								scan = scanFromPointCloudData(pointCloudDataMat, pose, model, rgb, &kpts, &kpts3);
+#ifndef DISABLE_LOG
+								LOGI("valid scan points = %d", scan.size());
+#endif
 							}
 						}
 						else
@@ -551,6 +493,11 @@ SensorData CameraARCore::captureImage(CameraInfo * info)
 
 						data = SensorData(scan, rgb, depthFromMotion_?getOcclusionImage():cv::Mat(), model, 0, stamp);
 						data.setFeatures(kpts,  kpts3, cv::Mat());
+
+						if(!pose.isNull())
+						{
+							this->poseReceived(pose, stamp);
+						}
 					}
 				}
 				else
@@ -571,134 +518,6 @@ SensorData CameraARCore::captureImage(CameraInfo * info)
 	ArCamera_release(ar_camera);
 
 	return data;
-
-}
-
-void CameraARCore::capturePoseOnly()
-{
-	UScopeMutex lock(arSessionMutex_);
-	//LOGI("Capturing image...");
-
-	if(!arSession_)
-	{
-		return;
-	}
-
-	if(textureId_ != 0)
-	{
-		glBindTexture(GL_TEXTURE_EXTERNAL_OES, textureId_);
-		glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		ArSession_setCameraTextureName(arSession_, textureId_);
-	}
-
-	// Update session to get current frame and render camera background.
-	if (ArSession_update(arSession_, arFrame_) != AR_SUCCESS) {
-		LOGE("CameraARCore::capturePoseOnly() ArSession_update error");
-		return;
-	}
-
-	// If display rotation changed (also includes view size change), we need to
-	// re-query the uv coordinates for the on-screen portion of the camera image.
-	int32_t geometry_changed = 0;
-	ArFrame_getDisplayGeometryChanged(arSession_, arFrame_, &geometry_changed);
-	if (geometry_changed != 0 || !uvs_initialized_) {
-		ArFrame_transformCoordinates2d(
-				arSession_, arFrame_, AR_COORDINATES_2D_OPENGL_NORMALIZED_DEVICE_COORDINATES,
-				BackgroundRenderer::kNumVertices, BackgroundRenderer_kVertices, AR_COORDINATES_2D_TEXTURE_NORMALIZED,
-				transformed_uvs_);
-		UASSERT(transformed_uvs_);
-		uvs_initialized_ = true;
-	}
-
-	ArCamera* ar_camera;
-	ArFrame_acquireCamera(arSession_, arFrame_, &ar_camera);
-
-	ArCamera_getViewMatrix(arSession_, ar_camera, glm::value_ptr(viewMatrix_));
-	ArCamera_getProjectionMatrix(arSession_, ar_camera,
-							   /*near=*/0.1f, /*far=*/100.f,
-							   glm::value_ptr(projectionMatrix_));
-
-	// adjust origin
-	if(!getOriginOffset().isNull())
-	{
-		viewMatrix_ = glm::inverse(rtabmap::glmFromTransform(rtabmap::opengl_world_T_rtabmap_world * getOriginOffset() *rtabmap::rtabmap_world_T_opengl_world)*glm::inverse(viewMatrix_));
-	}
-
-	ArTrackingState camera_tracking_state;
-	ArCamera_getTrackingState(arSession_, ar_camera, &camera_tracking_state);
-
-	Transform pose;
-	CameraModel model;
-	if(camera_tracking_state == AR_TRACKING_STATE_TRACKING)
-	{
-		// pose in OpenGL coordinates
-		float pose_raw[7];
-		ArCamera_getPose(arSession_, ar_camera, arPose_);
-		ArPose_getPoseRaw(arSession_, arPose_, pose_raw);
-		pose = Transform(pose_raw[4], pose_raw[5], pose_raw[6], pose_raw[0], pose_raw[1], pose_raw[2], pose_raw[3]);
-		if(!pose.isNull())
-		{
-			pose = rtabmap::rtabmap_world_T_opengl_world * pose * rtabmap::opengl_world_T_rtabmap_world;
-			this->poseReceived(pose);
-
-			if(!getOriginOffset().isNull())
-			{
-				pose = getOriginOffset() * pose;
-			}
-		}
-
-		int32_t is_depth_supported = 0;
-		ArSession_isDepthModeSupported(arSession_, AR_DEPTH_MODE_AUTOMATIC, &is_depth_supported);
-
-		if(is_depth_supported)
-		{
-			LOGD("Acquire depth image!");
-			ArImage * depthImage = nullptr;
-			ArFrame_acquireDepthImage(arSession_, arFrame_, &depthImage);
-
-			ArImageFormat format;
-			ArImage_getFormat(arSession_, depthImage, &format);
-			if(format == AR_IMAGE_FORMAT_DEPTH16)
-			{
-				LOGD("Depth format detected!");
-				int planeCount;
-				ArImage_getNumberOfPlanes(arSession_, depthImage, &planeCount);
-				LOGD("planeCount=%d", planeCount);
-				UASSERT_MSG(planeCount == 1, uFormat("Error: getNumberOfPlanes() planceCount = %d", planeCount).c_str());
-				const uint8_t *data = nullptr;
-				int len = 0;
-				int stride;
-				int width;
-				int height;
-				ArImage_getWidth(arSession_, depthImage, &width);
-				ArImage_getHeight(arSession_, depthImage, &height);
-				ArImage_getPlaneRowStride(arSession_, depthImage, 0, &stride);
-				ArImage_getPlaneData(arSession_, depthImage, 0, &data, &len);
-
-				LOGD("width=%d, height=%d, bytes=%d stride=%d", width, height, len, stride);
-
-				cv::Mat occlusionImage = cv::Mat(height, width, CV_16UC1, (void*)data).clone();
-
-				float fx,fy, cx, cy;
-				int32_t rgb_width, rgb_height;
-				ArCamera_getImageIntrinsics(arSession_, ar_camera, arCameraIntrinsics_);
-				ArCameraIntrinsics_getFocalLength(arSession_, arCameraIntrinsics_, &fx, &fy);
-				ArCameraIntrinsics_getPrincipalPoint(arSession_, arCameraIntrinsics_, &cx, &cy);
-				ArCameraIntrinsics_getImageDimensions(arSession_, arCameraIntrinsics_, &rgb_width, &rgb_height);
-
-				float scaleX = (float)width / (float)rgb_width;
-				float scaleY = (float)height / (float)rgb_height;
-				CameraModel occlusionModel(fx*scaleX, fy*scaleY, cx*scaleX, cy*scaleY, pose*deviceTColorCamera_, 0, cv::Size(width, height));
-				this->setOcclusionImage(occlusionImage, occlusionModel);
-			}
-			ArImage_release(depthImage);
-		}
-	}
-
-	ArCamera_release(ar_camera);
 }
 
 } /* namespace rtabmap */

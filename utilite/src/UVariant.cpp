@@ -32,11 +32,11 @@ UVariant::UVariant(const bool & value) :
 {
 	data_[0] = value?1:0;
 }
-UVariant::UVariant(const char & value) :
+UVariant::UVariant(const signed char & value) :
 	type_(kChar),
-	data_(sizeof(char))
+	data_(sizeof(signed char))
 {
-	memcpy(data_.data(), &value, sizeof(char));
+	memcpy(data_.data(), &value, sizeof(signed char));
 }
 UVariant::UVariant(const unsigned char & value) :
 	type_(kUChar),
@@ -93,6 +93,54 @@ UVariant::UVariant(const std::string & value) :
 {
 	memcpy(data_.data(), value.data(), value.size()+1);
 }
+UVariant::UVariant(const std::vector<signed char> & value) :
+	type_(kCharArray),
+	data_(sizeof(signed char)*value.size())
+{
+	memcpy(data_.data(), value.data(), sizeof(signed char)*value.size());
+}
+UVariant::UVariant(const std::vector<unsigned char> & value) :
+	type_(kUCharArray),
+	data_(sizeof(unsigned char)*value.size())
+{
+	memcpy(data_.data(), value.data(), sizeof(unsigned char)*value.size());
+}
+UVariant::UVariant(const std::vector<short> & value) :
+	type_(kShortArray),
+	data_(sizeof(short)*value.size())
+{
+	memcpy(data_.data(), value.data(), sizeof(short)*value.size());
+}
+UVariant::UVariant(const std::vector<unsigned short> & value) :
+	type_(kUShortArray),
+	data_(sizeof(unsigned short)*value.size())
+{
+	memcpy(data_.data(), value.data(), sizeof(unsigned short)*value.size());
+}
+UVariant::UVariant(const std::vector<int> & value) :
+	type_(kIntArray),
+	data_(sizeof(int)*value.size())
+{
+	memcpy(data_.data(), value.data(), sizeof(int)*value.size());
+}
+UVariant::UVariant(const std::vector<unsigned int> & value) :
+	type_(kUIntArray),
+	data_(sizeof(unsigned int)*value.size())
+{
+	memcpy(data_.data(), value.data(), sizeof(unsigned int)*value.size());
+}
+UVariant::UVariant(const std::vector<float> & value) :
+	type_(kFloatArray),
+	data_(sizeof(float)*value.size())
+{
+	memcpy(data_.data(), value.data(), sizeof(float)*value.size());
+}
+UVariant::UVariant(const std::vector<double> & value) :
+	type_(kDoubleArray),
+	data_(sizeof(double)*value.size())
+{
+	memcpy(data_.data(), value.data(), sizeof(double)*value.size());
+}
 
 bool UVariant::toBool() const
 {
@@ -107,16 +155,16 @@ bool UVariant::toBool() const
 	return false;
 }
 
-char UVariant::toChar(bool * ok) const
+signed char UVariant::toChar(bool * ok) const
 {
 	if(ok)
 	{
 		*ok = false;
 	}
-	char v = 0;
+	signed char v = 0;
 	if(type_ == kChar)
 	{
-		memcpy(&v, data_.data(), sizeof(char));
+		memcpy(&v, data_.data(), sizeof(signed char));
 		if(ok)
 		{
 			*ok = true;
@@ -125,9 +173,9 @@ char UVariant::toChar(bool * ok) const
 	else if(type_ == kUChar)
 	{
 		unsigned char tmp = toUChar();
-		if(tmp <= std::numeric_limits<char>::max())
+		if(tmp <= std::numeric_limits<signed char>::max())
 		{
-			v = (char)tmp;
+			v = (signed char)tmp;
 			if(ok)
 			{
 				*ok = true;
@@ -137,9 +185,9 @@ char UVariant::toChar(bool * ok) const
 	else if(type_ == kShort)
 	{
 		short tmp = toShort();
-		if(tmp >= std::numeric_limits<char>::min() && tmp <= std::numeric_limits<char>::max())
+		if(tmp >= std::numeric_limits<signed char>::min() && tmp <= std::numeric_limits<signed char>::max())
 		{
-			v = (char)tmp;
+			v = (signed char)tmp;
 			if(ok)
 			{
 				*ok = true;
@@ -149,9 +197,9 @@ char UVariant::toChar(bool * ok) const
 	else if(type_ == kUShort)
 	{
 		unsigned short tmp = toUShort();
-		if(tmp <= std::numeric_limits<char>::max())
+		if(tmp <= std::numeric_limits<signed char>::max())
 		{
-			v = (char)tmp;
+			v = (signed char)tmp;
 			if(ok)
 			{
 				*ok = true;
@@ -161,9 +209,9 @@ char UVariant::toChar(bool * ok) const
 	else if(type_ == kInt)
 	{
 		int tmp = toInt();
-		if(tmp >= std::numeric_limits<char>::min() && tmp <= std::numeric_limits<char>::max())
+		if(tmp >= std::numeric_limits<signed char>::min() && tmp <= std::numeric_limits<signed char>::max())
 		{
-			v = (char)tmp;
+			v = (signed char)tmp;
 			if(ok)
 			{
 				*ok = true;
@@ -173,9 +221,9 @@ char UVariant::toChar(bool * ok) const
 	else if(type_ == kUInt)
 	{
 		unsigned int tmp = toUInt();
-		if(tmp <= (unsigned int)std::numeric_limits<char>::max())
+		if(tmp <= (unsigned int)std::numeric_limits<signed char>::max())
 		{
-			v = (char)tmp;
+			v = (signed char)tmp;
 			if(ok)
 			{
 				*ok = true;
@@ -347,7 +395,7 @@ unsigned short UVariant::toUShort(bool * ok) const
 	}
 	else if(type_ == kChar)
 	{
-		char tmp = toChar();
+		signed char tmp = toChar();
 		if(tmp >= 0)
 		{
 			v = (unsigned short)tmp;
@@ -481,7 +529,7 @@ unsigned int UVariant::toUInt(bool * ok) const
 	}
 	else if(type_ == kChar)
 	{
-		char tmp = toChar();
+		signed char tmp = toChar();
 		if(tmp >= 0)
 		{
 			v = (unsigned int)tmp;
@@ -638,6 +686,185 @@ std::string UVariant::toStr(bool * ok) const
 	else if(type_ == kDouble)
 	{
 		v = uNumber2Str(toDouble(ok));
+	}
+	return v;
+}
+
+std::vector<signed char> UVariant::toCharArray(bool * ok) const
+{
+	if(ok)
+	{
+		*ok = false;
+	}
+
+	std::vector<signed char> v;
+	if(type_ == kCharArray)
+	{
+		if(ok)
+		{
+			*ok = true;
+		}
+		if(data_.size())
+		{
+			v.resize(data_.size() / sizeof(signed char));
+			memcpy(v.data(), data_.data(), data_.size());
+		}
+	}
+	return v;
+}
+
+std::vector<unsigned char> UVariant::toUCharArray(bool * ok) const
+{
+	if(ok)
+	{
+		*ok = false;
+	}
+
+	std::vector<unsigned char> v;
+	if(type_ == kUCharArray)
+	{
+		if(ok)
+		{
+			*ok = true;
+		}
+		if(data_.size())
+		{
+			v.resize(data_.size() / sizeof(unsigned char));
+			memcpy(v.data(), data_.data(), data_.size());
+		}
+	}
+	return v;
+}
+
+std::vector<short> UVariant::toShortArray(bool * ok) const
+{
+	if(ok)
+	{
+		*ok = false;
+	}
+
+	std::vector<short> v;
+	if(type_ == kShortArray)
+	{
+		if(ok)
+		{
+			*ok = true;
+		}
+		if(data_.size())
+		{
+			v.resize(data_.size() / sizeof(short));
+			memcpy(v.data(), data_.data(), data_.size());
+		}
+	}
+	return v;
+}
+std::vector<unsigned short> UVariant::toUShortArray(bool * ok) const
+{
+	if(ok)
+	{
+		*ok = false;
+	}
+
+	std::vector<unsigned short> v;
+	if(type_ == kUShortArray)
+	{
+		if(ok)
+		{
+			*ok = true;
+		}
+		if(data_.size())
+		{
+			v.resize(data_.size() / sizeof(unsigned short));
+			memcpy(v.data(), data_.data(), data_.size());
+		}
+	}
+	return v;
+}
+std::vector<int> UVariant::toIntArray(bool * ok) const
+{
+	if(ok)
+	{
+		*ok = false;
+	}
+
+	std::vector<int> v;
+	if(type_ == kIntArray)
+	{
+		if(ok)
+		{
+			*ok = true;
+		}
+		if(data_.size())
+		{
+			v.resize(data_.size() / sizeof(int));
+			memcpy(v.data(), data_.data(), data_.size());
+		}
+	}
+	return v;
+}
+std::vector<unsigned int> UVariant::toUIntArray(bool * ok) const
+{
+	if(ok)
+	{
+		*ok = false;
+	}
+
+	std::vector<unsigned int> v;
+	if(type_ == kUIntArray)
+	{
+		if(ok)
+		{
+			*ok = true;
+		}
+		if(data_.size())
+		{
+			v.resize(data_.size() / sizeof(unsigned int));
+			memcpy(v.data(), data_.data(), data_.size());
+		}
+	}
+	return v;
+}
+std::vector<float> UVariant::toFloatArray(bool * ok) const
+{
+	if(ok)
+	{
+		*ok = false;
+	}
+
+	std::vector<float> v;
+	if(type_ == kFloatArray)
+	{
+		if(ok)
+		{
+			*ok = true;
+		}
+		if(data_.size())
+		{
+			v.resize(data_.size() / sizeof(float));
+			memcpy(v.data(), data_.data(), data_.size());
+		}
+	}
+	return v;
+}
+std::vector<double> UVariant::toDoubleArray(bool * ok) const
+{
+	if(ok)
+	{
+		*ok = false;
+	}
+
+	std::vector<double> v;
+	if(type_ == kDoubleArray)
+	{
+		if(ok)
+		{
+			*ok = true;
+		}
+		if(data_.size())
+		{
+			v.resize(data_.size() / sizeof(double));
+			memcpy(v.data(), data_.data(), data_.size());
+		}
 	}
 	return v;
 }

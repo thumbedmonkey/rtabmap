@@ -44,7 +44,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "rtabmap/utilite/UEventsHandler.h"
 #include "rtabmap/utilite/ULogger.h"
 #include "rtabmap/core/OdometryEvent.h"
-#include "rtabmap/core/CameraThread.h"
+#include <rtabmap/core/SensorCaptureThread.h>
 
 using namespace rtabmap;
 
@@ -54,7 +54,7 @@ class MapBuilder : public QWidget, public UEventsHandler
 	Q_OBJECT
 public:
 	//Camera ownership is not transferred!
-	MapBuilder(CameraThread * camera = 0) :
+	MapBuilder(SensorCaptureThread * camera = 0) :
 		camera_(camera),
 		odometryCorrection_(Transform::getIdentity()),
 		processingStatistics_(false),
@@ -129,7 +129,7 @@ protected Q_SLOTS:
 			if(odom.data().depthOrRightRaw().cols == odom.data().imageRaw().cols &&
 			   odom.data().depthOrRightRaw().rows == odom.data().imageRaw().rows &&
 			   !odom.data().depthOrRightRaw().empty() &&
-			   (odom.data().stereoCameraModel().isValidForProjection() || odom.data().cameraModels().size()))
+			   (odom.data().stereoCameraModels().size() || odom.data().cameraModels().size()))
 			{
 				pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud = util3d::cloudRGBFromSensorData(
 					odom.data(),
@@ -156,6 +156,7 @@ protected Q_SLOTS:
 			}
 		}
 		cloudViewer_->update();
+		cloudViewer_->refreshView();
 
 		lastOdometryProcessed_ = true;
 	}
@@ -245,6 +246,7 @@ protected Q_SLOTS:
 		odometryCorrection_ = stats.mapCorrection();
 
 		cloudViewer_->update();
+		cloudViewer_->refreshView();
 
 		processingStatistics_ = false;
 	}
@@ -278,7 +280,7 @@ protected Q_SLOTS:
 
 protected:
 	CloudViewer * cloudViewer_;
-	CameraThread * camera_;
+	SensorCaptureThread * camera_;
 	Transform lastOdomPose_;
 	Transform odometryCorrection_;
 	bool processingStatistics_;

@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef DBDRIVER_H_
 #define DBDRIVER_H_
 
-#include "rtabmap/core/RtabmapExp.h" // DLL export/import defines
+#include "rtabmap/core/rtabmap_core_export.h" // DLL export/import defines
 
 #include <string>
 #include <list>
@@ -59,7 +59,7 @@ class VisualWord;
 //but never, never try to use the same connection simultaneously in
 //two or more threads."
 //
-class RTABMAP_EXP DBDriver : public UThreadNode
+class RTABMAP_CORE_EXPORT DBDriver : public UThreadNode
 {
 public:
 	static DBDriver * create(const ParametersMap & parameters = ParametersMap());
@@ -96,7 +96,11 @@ public:
 				const cv::Mat & empty,
 				float cellSize,
 				const cv::Point3f & viewpoint);
-	void updateDepthImage(int nodeId, const cv::Mat & image);
+	void updateCalibration(
+		int nodeId,
+		const std::vector<CameraModel> & models,
+		const std::vector<StereoCameraModel> & stereoModels);
+	void updateDepthImage(int nodeId, const cv::Mat & image, const std::string & format);
 	void updateLaserScan(int nodeId, const LaserScan & scan);
 
 public:
@@ -167,13 +171,14 @@ public:
 	void loadNodeData(Signature * signature, bool images = true, bool scan = true, bool userData = true, bool occupancyGrid = true) const;
 	void loadNodeData(std::list<Signature *> & signatures, bool images = true, bool scan = true, bool userData = true, bool occupancyGrid = true) const;
 	void getNodeData(int signatureId, SensorData & data, bool images = true, bool scan = true, bool userData = true, bool occupancyGrid = true) const;
-	bool getCalibration(int signatureId, std::vector<CameraModel> & models, StereoCameraModel & stereoModel) const;
+	bool getCalibration(int signatureId, std::vector<CameraModel> & models, std::vector<StereoCameraModel> & stereoModels) const;
 	bool getLaserScanInfo(int signatureId, LaserScan & info) const;
 	bool getNodeInfo(int signatureId, Transform & pose, int & mapId, int & weight, std::string & label, double & stamp, Transform & groundTruthPose, std::vector<float> & velocity, GPS & gps, EnvSensors & sensors) const;
 	void loadLinks(int signatureId, std::multimap<int, Link> & links, Link::Type type = Link::kUndef) const;
 	void getWeight(int signatureId, int & weight) const;
 	void getLastNodeIds(std::set<int> & ids) const;
 	void getAllNodeIds(std::set<int> & ids, bool ignoreChildren = false, bool ignoreBadSignatures = false, bool ignoreIntermediateNodes = false) const;
+	void getAllOdomPoses(std::map<int, Transform> & poses, bool ignoreChildren = false, bool ignoreIntermediateNodes = false) const;
 	void getAllLinks(std::multimap<int, Link> & links, bool ignoreNullLinks = true, bool withLandmarks = false) const;
 	void getLastNodeId(int & id) const;
 	void getLastMapId(int & mapId) const;
@@ -231,9 +236,15 @@ protected:
 			float cellSize,
 			const cv::Point3f & viewpoint) const = 0;
 
+	virtual void updateCalibrationQuery(
+			int nodeId,
+			const std::vector<CameraModel> & models,
+			const std::vector<StereoCameraModel> & stereoModels) const = 0;
+
 	virtual void updateDepthImageQuery(
 			int nodeId,
-			const cv::Mat & image) const = 0;
+			const cv::Mat & image,
+			const std::string & format) const = 0;
 
 	virtual void updateLaserScanQuery(
 			int nodeId,
@@ -272,11 +283,12 @@ protected:
 	virtual void loadLinksQuery(int signatureId, std::multimap<int, Link> & links, Link::Type type = Link::kUndef) const = 0;
 
 	virtual void loadNodeDataQuery(std::list<Signature *> & signatures, bool images=true, bool scan=true, bool userData=true, bool occupancyGrid=true) const = 0;
-	virtual bool getCalibrationQuery(int signatureId, std::vector<CameraModel> & models, StereoCameraModel & stereoModel) const = 0;
+	virtual bool getCalibrationQuery(int signatureId, std::vector<CameraModel> & models, std::vector<StereoCameraModel> & stereoModels) const = 0;
 	virtual bool getLaserScanInfoQuery(int signatureId, LaserScan & info) const = 0;
 	virtual bool getNodeInfoQuery(int signatureId, Transform & pose, int & mapId, int & weight, std::string & label, double & stamp, Transform & groundTruthPose, std::vector<float> & velocity, GPS & gps, EnvSensors & sensors) const = 0;
 	virtual void getLastNodeIdsQuery(std::set<int> & ids) const = 0;
 	virtual void getAllNodeIdsQuery(std::set<int> & ids, bool ignoreChildren, bool ignoreBadSignatures, bool ignoreIntermediateNodes) const = 0;
+	virtual void getAllOdomPosesQuery(std::map<int, Transform> & poses, bool ignoreChildren, bool ignoreIntermediateNodes) const = 0;
 	virtual void getAllLinksQuery(std::multimap<int, Link> & links, bool ignoreNullLinks, bool withLandmarks) const = 0;
 	virtual void getLastIdQuery(const std::string & tableName, int & id, const std::string & fieldName="id") const = 0;
 	virtual void getInvertedIndexNiQuery(int signatureId, int & ni) const = 0;

@@ -33,11 +33,12 @@ void setupCallbacksNative(const void *object, void * classPtr,
                                                    int,
                                                    float, float, float, float,
                                                    int, int,
-                                                   float, float, float, float, float, float))
+                                                   float, float, float, float, float, float),
+                          void(*cameraInfoEventCallback)(void *, int, const char*, const char*))
 {
     if(object)
     {
-        native(object)->setupSwiftCallbacks(classPtr, progressCallback, initCallback, statsUpdatedCallback);
+        native(object)->setupSwiftCallbacks(classPtr, progressCallback, initCallback, statsUpdatedCallback, cameraInfoEventCallback);
     }
     else
     {
@@ -69,24 +70,11 @@ void setScreenRotationNative(const void *object, int displayRotation)
     }
 }
 
-int openDatabaseNative(const void *object, const char * databasePath, bool databaseInMemory, bool optimize)
+int openDatabaseNative(const void *object, const char * databasePath, bool databaseInMemory, bool optimize, bool clearDatabase)
 {
     if(object)
     {
-        return native(object)->openDatabase(databasePath, databaseInMemory, optimize);
-    }
-    else
-    {
-        UERROR("object is null!");
-        return -1;
-    }
-}
-
-int openDatabase2Native(const void *object, const char * databaseSource, const char * databasePath, bool databaseInMemory, bool optimize)
-{
-    if(object)
-    {
-        return native(object)->openDatabase(databasePath, databaseInMemory, optimize, databaseSource);
+        return native(object)->openDatabase(databasePath, databaseInMemory, optimize, clearDatabase);
     }
     else
     {
@@ -100,6 +88,31 @@ void saveNative(const void *object, const char * databasePath)
     if(object)
     {
         return native(object)->save(databasePath);
+    }
+    else
+    {
+        UERROR("object is null!");
+    }
+}
+
+bool recoverNative(const void *object, const char * from, const char * to)
+{
+    if(object)
+    {
+        return native(object)->recover(from, to);
+    }
+    else
+    {
+        UERROR("object is null!");
+    }
+    return false;
+}
+
+void cancelProcessingNative(const void *object)
+{
+    if(object)
+    {
+        native(object)->cancelProcessing();
     }
     else
     {
@@ -271,20 +284,6 @@ void setCameraNative(const void *object, int type) {
     }
 }
 
-void postCameraPoseEventNative(const void *object,
-        float x, float y, float z, float qx, float qy, float qz, float qw)
-{
-    if(object)
-    {
-        native(object)->postCameraPoseEvent(x,y,z,qx,qy,qz,qw,0.0);
-    }
-    else
-    {
-        UERROR("object is null!");
-        return;
-    }
-}
-
 void postOdometryEventNative(const void *object,
         float x, float y, float z, float qx, float qy, float qz, float qw,
         float fx, float fy, float cx, float cy,
@@ -300,7 +299,7 @@ void postOdometryEventNative(const void *object,
     if(object)
     {
         native(object)->postOdometryEvent(
-                rtabmap::Transform(x,y,z,qx,qy,qz,qw),
+                (qx==0.0f && qy==0.0f && qz==0.0f && qw==0.0f)?rtabmap::Transform():rtabmap::Transform(x,y,z,qx,qy,qz,qw),
                 fx,fy,cx,cy, 0,0,0,0,
                 rtabmap::Transform(), rtabmap::Transform(),
                 stamp, 0,
@@ -442,6 +441,13 @@ void setLocalizationModeNative(const void *object, bool enabled)
     else
         UERROR("object is null!");
 }
+void setDataRecorderModeNative(const void *object, bool enabled)
+{
+    if(object)
+        native(object)->setDataRecorderMode(enabled);
+    else
+        UERROR("object is null!");
+}
 void setTrajectoryModeNative(const void *object, bool enabled)
 {
     if(object)
@@ -477,13 +483,6 @@ void setGridVisibleNative(const void *object, bool visible)
     else
         UERROR("object is null!");
 }
-void setRawScanSavedNative(const void *object, bool enabled)
-{
-    if(object)
-        native(object)->setRawScanSaved(enabled);
-    else
-        UERROR("object is null!");
-}
 void setFullResolutionNative(const void *object, bool enabled)
 {
     if(object)
@@ -502,6 +501,13 @@ void setAppendModeNative(const void *object, bool enabled)
 {
     if(object)
         native(object)->setAppendMode(enabled);
+    else
+        UERROR("object is null!");
+}
+void setUpstreamRelocalizationAccThrNative(const void * object, float value)
+{
+    if(object)
+        native(object)->setUpstreamRelocalizationAccThr(value);
     else
         UERROR("object is null!");
 }
@@ -582,6 +588,15 @@ void setDepthConfidenceNative(const void *object, int value)
     else
         UERROR("object is null!");
 }
+
+void setExportPointCloudFormatNative(const void *object, const char * format)
+{
+    if(object)
+        native(object)->setExportPointCloudFormat(format);
+    else
+        UERROR("object is null!");
+}
+
 int setMappingParameterNative(const void *object, const char * key, const char * value)
 {
     if(object)

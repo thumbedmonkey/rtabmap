@@ -37,22 +37,47 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifdef RTABMAP_CERES
 #include <ceres/ceres.h>
+
+#if CERES_VERSION_MAJOR >= 3 || \
+    (CERES_VERSION_MAJOR == 2 && CERES_VERSION_MINOR >= 1)
+#include <ceres/manifold.h>
+#else
 #include <ceres/local_parameterization.h>
+#endif
+
 #include "ceres/pose_graph_2d/types.h"
 #include "ceres/pose_graph_2d/pose_graph_2d_error_term.h"
-#include "ceres/pose_graph_2d/angle_local_parameterization.h"
+#include "ceres/pose_graph_2d/angle_manifold.h"
 #include "ceres/pose_graph_3d/types.h"
 #include "ceres/pose_graph_3d/pose_graph_3d_error_term.h"
 #include "ceres/bundle/BAProblem.h"
 #include "ceres/bundle/snavely_reprojection_error.h"
 
 #if not(CERES_VERSION_MAJOR > 1 || (CERES_VERSION_MAJOR == 1 && CERES_VERSION_MINOR >= 12))
-#include "ceres/pose_graph_3d/eigen_quaternion_parameterization.h"
+#include "ceres/pose_graph_3d/eigen_quaternion_manifold.h"
 #endif
 
 #endif
 
 namespace rtabmap {
+namespace {
+
+#ifdef RTABMAP_CERES
+#if CERES_VERSION_MAJOR >= 3 || \
+    (CERES_VERSION_MAJOR == 2 && CERES_VERSION_MINOR >= 1)
+inline void SetCeresProblemManifold(ceres::Problem& problem, double* params,
+                                    ceres::Manifold* manifold) {
+  problem.SetManifold(params, manifold);
+#else
+inline void SetCeresProblemManifold(
+    ceres::Problem& problem, double* params,
+    ceres::LocalParameterization* parameterization) {
+  problem.SetParameterization(params, parameterization);
+#endif
+}
+#endif
+
+}  // namespace
 
 bool OptimizerCeres::available()
 {
@@ -118,8 +143,14 @@ std::map<int, Transform> OptimizerCeres::optimize(
 		}
 
 		ceres::LossFunction* loss_function = NULL;
-		ceres::LocalParameterization* angle_local_parameterization = NULL;
-		ceres::LocalParameterization* quaternion_local_parameterization = NULL;
+#if CERES_VERSION_MAJOR >= 3 || \
+    (CERES_VERSION_MAJOR == 2 && CERES_VERSION_MINOR >= 1)
+		ceres::Manifold* angle_local_manifold = NULL;
+		ceres::Manifold* quaternion_local_manifold = NULL;
+#else
+		ceres::LocalParameterization* angle_local_manifold = NULL;
+		ceres::LocalParameterization* quaternion_local_manifold = NULL;
+#endif
 
 		for(std::multimap<int, Link>::const_iterator iter=edgeConstraints.begin(); iter!=edgeConstraints.end(); ++iter)
 		{
@@ -164,12 +195,12 @@ std::map<int, Transform> OptimizerCeres::optimize(
 						&pose_begin_iter->second.x,	&pose_begin_iter->second.y, &pose_begin_iter->second.yaw_radians,
 						&pose_end_iter->second.x, &pose_end_iter->second.y, &pose_end_iter->second.yaw_radians);
 
-					if(angle_local_parameterization == NULL)
+					if(angle_local_manifold == NULL)
 					{
-						angle_local_parameterization = ceres::examples::AngleLocalParameterization::Create();
+						angle_local_manifold = ceres::examples::AngleManfold::Create();
 					}
-					problem.SetParameterization(&pose_begin_iter->second.yaw_radians, angle_local_parameterization);
-					problem.SetParameterization(&pose_end_iter->second.yaw_radians, angle_local_parameterization);
+					SetCeresProblemManifold(problem, &pose_begin_iter->second.yaw_radians, angle_local_manifold);
+					SetCeresProblemManifold(problem, &pose_end_iter->second.yaw_radians, angle_local_manifold);
 				}
 				else
 				{
@@ -194,12 +225,17 @@ std::map<int, Transform> OptimizerCeres::optimize(
 					problem.AddResidualBlock(cost_function, loss_function,
 											  pose_begin_iter->second.p.data(), pose_begin_iter->second.q.coeffs().data(),
 											  pose_end_iter->second.p.data(), pose_end_iter->second.q.coeffs().data());
-					if(quaternion_local_parameterization == NULL)
+					if(quaternion_local_manifold == NULL)
 					{
-						quaternion_local_parameterization = new ceres::EigenQuaternionParameterization;
+#if CERES_VERSION_MAJOR >= 3 || \
+    (CERES_VERSION_MAJOR == 2 && CERES_VERSION_MINOR >= 1)
+						quaternion_local_manifold = new ceres::EigenQuaternionManifold;
+#else
+						quaternion_local_manifold = new ceres::EigenQuaternionParameterization;
+#endif
 					}
-					problem.SetParameterization(pose_begin_iter->second.q.coeffs().data(), quaternion_local_parameterization);
-					problem.SetParameterization(pose_end_iter->second.q.coeffs().data(), quaternion_local_parameterization);
+					SetCeresProblemManifold(problem, pose_begin_iter->second.q.coeffs().data(), quaternion_local_manifold);
+					SetCeresProblemManifold(problem, pose_end_iter->second.q.coeffs().data(), quaternion_local_manifold);
 				}
 			}
 			//else // not supporting pose prior and landmarks
@@ -238,8 +274,9 @@ std::map<int, Transform> OptimizerCeres::optimize(
 		UINFO("Ceres optimizing begin (iterations=%d)", iterations());
 
 		ceres::Solver::Options options;
+		options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+		options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
 		options.max_num_iterations = iterations();
-		options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
 		options.function_tolerance = this->epsilon();
 		ceres::Solver::Summary summary;
 		UTimer timer;
@@ -317,7 +354,7 @@ std::map<int, Transform> OptimizerCeres::optimizeBA(
 		int rootId,
 		const std::map<int, Transform> & posesIn,
 		const std::multimap<int, Link> & links,
-		const std::map<int, CameraModel> & models,
+		const std::map<int, std::vector<CameraModel> > & models,
 		std::map<int, cv::Point3f> & points3DMap,
 		const std::map<int, std::map<int, FeatureBA> > & wordReferences, // <ID words, IDs frames + keypoint/Disparity>)
 		std::set<int> * outliers)
@@ -354,10 +391,16 @@ std::map<int, Transform> OptimizerCeres::optimizeBA(
 		++iter)
 	{
 		// Get camera model
-		std::map<int, CameraModel>::const_iterator iterModel = models.find(iter->first);
-		UASSERT(iterModel != models.end() && iterModel->second.isValidForProjection());
+		std::map<int, std::vector<CameraModel> >::const_iterator iterModel = models.find(iter->first);
+		UASSERT(iterModel != models.end());
+		if(iterModel->second.size() != 1)
+		{
+			UERROR("Multi-camera BA not implemented for Ceres, only single camera.");
+			return std::map<int, Transform>();
+		}
+		UASSERT(iterModel->second[0].isValidForProjection());
 
-		const Transform & t = (iter->second * iterModel->second.localTransform()).inverse();
+		const Transform & t = (iter->second * iterModel->second[0].localTransform()).inverse();
 		cv::Mat R = (cv::Mat_<double>(3,3) <<
 				(double)t.r11(), (double)t.r12(), (double)t.r13(),
 				(double)t.r21(), (double)t.r22(), (double)t.r23(),
@@ -403,15 +446,21 @@ std::map<int, Transform> OptimizerCeres::optimizeBA(
 			jter!=iter->second.end();
 			++jter)
 		{
-			std::map<int, CameraModel>::const_iterator iterModel = models.find(jter->first);
-			UASSERT(iterModel != models.end() && iterModel->second.isValidForProjection());
+			std::map<int, std::vector<CameraModel> >::const_iterator iterModel = models.find(jter->first);
+			UASSERT(iterModel != models.end());
+			if(iterModel->second.size() != 1)
+			{
+				UERROR("Multi-camera BA not implemented for Ceres, only single camera.");
+				return std::map<int, Transform>();
+			}
+			UASSERT(iterModel->second[0].isValidForProjection());
 
 			baProblem.camera_index_[oi] = camIdToIndex.at(jter->first);
 			baProblem.point_index_[oi] = pointIdToIndex.at(iter->first);
-			baProblem.observations_[4*oi] = jter->second.kpt.pt.x - iterModel->second.cx();
-			baProblem.observations_[4*oi+1] = jter->second.kpt.pt.y - iterModel->second.cy();
-			baProblem.observations_[4*oi+2] = iterModel->second.fx();
-			baProblem.observations_[4*oi+3] = iterModel->second.fy();
+			baProblem.observations_[4*oi] = jter->second.kpt.pt.x - iterModel->second[0].cx();
+			baProblem.observations_[4*oi+1] = jter->second.kpt.pt.y - iterModel->second[0].cy();
+			baProblem.observations_[4*oi+2] = iterModel->second[0].fx();
+			baProblem.observations_[4*oi+3] = iterModel->second[0].fy();
 			++oi;
 		}
 	}
@@ -445,7 +494,8 @@ std::map<int, Transform> OptimizerCeres::optimizeBA(
 	// standard solver, SPARSE_NORMAL_CHOLESKY, also works fine but it is slower
 	// for standard bundle adjustment problems.
 	ceres::Solver::Options options;
-	options.linear_solver_type = ceres::DENSE_SCHUR;
+	options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+	options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
 	options.max_num_iterations = iterations();
 	//options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
 	options.function_tolerance = this->epsilon();
@@ -480,13 +530,13 @@ std::map<int, Transform> OptimizerCeres::optimizeBA(
 
 		if(this->isSlam2d())
 		{
-			t = (models.at(iter->first).localTransform() * t).inverse();
+			t = (models.at(iter->first)[0].localTransform() * t).inverse();
 			t = iter->second.inverse() * t;
 			iter->second *= t.to3DoF();
 		}
 		else
 		{
-			iter->second = (models.at(iter->first).localTransform() * t).inverse();
+			iter->second = (models.at(iter->first)[0].localTransform() * t).inverse();
 		}
 
 	}
